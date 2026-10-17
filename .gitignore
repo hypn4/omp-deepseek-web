@@ -1,0 +1,6 @@
+node_modules/
+apk/
+.omp/config.yml.lock
+.DS_Store
+*.log
+.env
