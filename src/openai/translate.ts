@@ -37,6 +37,19 @@ const V31_UNCLOSED_BLOCK = new RegExp(
 );
 
 /**
+ * The web model otherwise tends to mirror the language of search results or
+ * tool output. Keep the user's language authoritative without hardcoding a
+ * locale; this also survives prompts that contain multiple languages.
+ */
+const RESPONSE_LANGUAGE_RULE = [
+  "## Response language",
+  "Write the final answer in the same natural language as the latest user message.",
+  "Search results, web pages, tool output, and source quotations may be in another language; summarize or translate them into the user's language.",
+  "Do not switch to Chinese, English, or another language merely because the retrieved sources are in that language.",
+  "Keep code, commands, file paths, and identifiers unchanged.",
+].join("\n");
+
+/**
  * Builds the single DeepSeek `prompt` string for one OpenAI request.
  *
  * Order: system messages, the tool protocol block, then the transcript
@@ -73,6 +86,7 @@ export function buildPrompt(messages: OpenAIMessage[], tools: OpenAITool[]): str
     blocks.push(toolPrompt);
   }
   if (transcript.length > 0) {
+    blocks.push(RESPONSE_LANGUAGE_RULE);
     blocks.push(transcript);
   }
   return blocks.join("\n\n");

@@ -46,6 +46,7 @@ describe("buildPrompt", () => {
     const systemIndex = prompt.indexOf("You are a coding agent.");
     const toolPromptIndex = prompt.indexOf("You are the model backend for a coding agent.");
     const toolSectionIndex = prompt.indexOf("### read");
+    const languageIndex = prompt.indexOf("## Response language");
     const userIndex = prompt.indexOf("User:\nRead /tmp/x");
     const assistantIndex = prompt.indexOf("Assistant:");
     const toolResultIndex = prompt.indexOf(
@@ -58,7 +59,8 @@ describe("buildPrompt", () => {
     expect(systemIndex).toBeGreaterThan(-1);
     expect(toolPromptIndex).toBeGreaterThan(systemIndex);
     expect(toolSectionIndex).toBeGreaterThan(toolPromptIndex);
-    expect(userIndex).toBeGreaterThan(toolSectionIndex);
+    expect(languageIndex).toBeGreaterThan(toolSectionIndex);
+    expect(userIndex).toBeGreaterThan(languageIndex);
     expect(assistantIndex).toBeGreaterThan(userIndex);
     expect(toolResultIndex).toBeGreaterThan(assistantIndex);
     expect(continueIndex).toBeGreaterThan(toolResultIndex);
@@ -78,7 +80,9 @@ describe("buildPrompt", () => {
       [],
     );
 
-    expect(prompt).toBe("Be concise.\n\nUser:\nhi");
+    expect(prompt).toContain("Be concise.");
+    expect(prompt).toContain("## Response language");
+    expect(prompt).toContain("User:\nhi");
     expect(prompt).not.toContain("You are the model backend");
     expect(prompt).not.toContain(dsmlOpen("tool_calls"));
   });
@@ -86,7 +90,8 @@ describe("buildPrompt", () => {
   test("skips empty blocks and does not append a continue turn for a user turn", () => {
     const prompt = buildPrompt([{ role: "user", content: "hello" }], []);
 
-    expect(prompt).toBe("User:\nhello");
+    expect(prompt).toContain("## Response language");
+    expect(prompt).toContain("User:\nhello");
     expect(prompt).not.toContain("Continue the task");
   });
 

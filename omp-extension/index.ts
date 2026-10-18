@@ -93,11 +93,8 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
         context as unknown as PromptContext,
         {
           signal: options?.signal,
-          // Native tool turns run without DeepThink. `DEEPSEEK_WEB_THINKING=1`
-          // explicitly opts into thinking even when tools are advertised.
           thinkingEnabled: resolveThinkingEnabled(
             process.env.DEEPSEEK_WEB_THINKING,
-            (context.tools?.length ?? 0) > 0,
           ),
           searchEnabled: process.env.DEEPSEEK_WEB_SEARCH !== "0",
         },
