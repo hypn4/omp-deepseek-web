@@ -200,6 +200,7 @@ describe("DeepSeekClient", () => {
         { code: 0, msg: "", data: { biz_code: 40003, biz_msg: "INVALID_TOKEN" } },
         401,
       ),
+      jsonResponse(envelope({ rotate: null, data: null })),
     );
 
     const error = await capture(
@@ -210,9 +211,12 @@ describe("DeepSeekClient", () => {
 
   test("maps 40301 and 40300 to PowError", async () => {
     for (const code of [40301, 40300]) {
-      installFetch(
-        jsonResponse({ code: 0, msg: "", data: { biz_code: code, biz_msg: "POW" } }, 403),
-      );
+      const failure = () =>
+        jsonResponse(
+          { code: 0, msg: "", data: { biz_code: code, biz_msg: "POW" } },
+          403,
+        );
+      installFetch(failure(), failure());
       const error = await capture(makeClient().createSession());
       expect(error).toBeInstanceOf(PowError);
     }

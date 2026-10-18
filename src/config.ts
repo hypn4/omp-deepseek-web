@@ -33,6 +33,8 @@ export interface ServerConfig {
   /** Default web-search setting. */
   search?: boolean;
   logLevel?: LogLevel;
+  /** Shell command whose trimmed stdout is a fresh token after a 401. */
+  tokenCommand?: string;
   /** Injected client factory; defaults to a real `DeepSeekClient` per token. */
   createClient?: (token: string) => CompletionClient;
 }
@@ -75,6 +77,7 @@ function readLogLevel(value: string | undefined): LogLevel {
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
 ): ServerConfig {
+  const tokenCommand = env.DEEPSEEK_WEB_TOKEN_CMD?.trim();
   return {
     port: readInteger(env.DEEPSEEK_WEB_PORT, DEFAULT_PORT),
     hostname: DEFAULT_HOSTNAME,
@@ -87,5 +90,7 @@ export function loadConfig(
     thinking: readFlag(env.DEEPSEEK_WEB_THINKING),
     search: readFlag(env.DEEPSEEK_WEB_SEARCH),
     logLevel: readLogLevel(env.DEEPSEEK_WEB_LOG_LEVEL),
+    tokenCommand:
+      tokenCommand === undefined || tokenCommand === "" ? undefined : tokenCommand,
   };
 }

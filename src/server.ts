@@ -66,6 +66,7 @@ function resolveConfig(config: ServerConfig): ResolvedConfig {
           baseUrl,
           token,
           deviceId,
+          tokenCommand: config.tokenCommand,
         })),
   };
 }

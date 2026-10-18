@@ -50,6 +50,11 @@ function apiError(code: number, message: string, status?: number): Error {
   return new DeepSeekApiError(code, message, status);
 }
 
+/** Bun and Node both reject a failed `fetch` with a `TypeError`. */
+function isNetworkError(error: unknown): error is TypeError {
+  return error instanceof TypeError;
+}
+
 function throwIfError(payload: DeepSeekEnvelope<unknown>, status: number): void {
   const topLevel = typeof payload.code === "number" ? payload.code : 0;
   const biz = payload.data;
@@ -73,11 +78,12 @@ function throwIfError(payload: DeepSeekEnvelope<unknown>, status: number): void 
  */
 export class DeepSeekClient {
   readonly #baseUrl: string;
-  readonly #token: string;
+  #token: string;
   readonly #deviceId: string;
   readonly #locale: string;
   readonly #timezoneOffset: string;
   readonly #clientVersion: string;
+  readonly #tokenCommand: string | undefined;
 
   constructor(config: DeepSeekConfig) {
     this.#baseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -86,6 +92,7 @@ export class DeepSeekClient {
     this.#locale = config.locale ?? "en_US";
     this.#timezoneOffset = config.timezoneOffset ?? "32400";
     this.#clientVersion = config.clientVersion ?? "2.5.0";
+    this.#tokenCommand = config.tokenCommand;
   }
 
   async #request(
@@ -112,6 +119,9 @@ export class DeepSeekClient {
     try {
       payload = JSON.parse(text) as DeepSeekEnvelope<T>;
     } catch {
+      if (response.status === 401) {
+        throw new TokenError();
+      }
       throw new DeepSeekApiError(
         -1,
         `DeepSeek returned an invalid JSON response (HTTP ${response.status})`,
@@ -156,7 +166,79 @@ export class DeepSeekClient {
     );
   }
 
+  /**
+   * Runs an upstream operation, retrying exactly once after a recoverable
+   * failure: an auth failure recovers the token, a PoW or network failure just
+   * runs the operation again (the challenge is fetched inside the operation).
+   */
+  async #withRetry<T>(
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+      if (error instanceof TokenError) {
+        await this.#recoverToken(error);
+        return operation();
+      }
+      if (error instanceof PowError || isNetworkError(error)) {
+        return operation();
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Recovers from an auth failure via `check_device` rotation, falling back to
+   * `tokenCommand`. Throws the original `TokenError` when neither works.
+   */
+  async #recoverToken(original: TokenError): Promise<void> {
+    try {
+      const result = await this.checkDevice(this.#token, this.#deviceId);
+      if (result.rotated) {
+        this.#token = result.token;
+        return;
+      }
+    } catch (error) {
+      if (!(error instanceof TokenError) && !isNetworkError(error)) {
+        throw error;
+      }
+    }
+
+    if (this.#tokenCommand !== undefined) {
+      const token = await this.#runTokenCommand(this.#tokenCommand);
+      if (token !== "") {
+        this.#token = token;
+        return;
+      }
+    }
+    throw original;
+  }
+
+  /** Runs the token command and returns its trimmed stdout (never logged). */
+  async #runTokenCommand(command: string): Promise<string> {
+    const child = Bun.spawn(["sh", "-c", command], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return exitCode === 0 ? stdout.trim() : "";
+  }
+
   async createSession(): Promise<string> {
+    return this.#withRetry(() => this.#createSessionOnce());
+  }
+
+  async #createSessionOnce(): Promise<string> {
     const response = await this.#request("/api/v0/chat_session/create", {
       method: "POST",
       body: "{}",
@@ -207,6 +289,13 @@ export class DeepSeekClient {
   }
 
   async complete(
+    req: DeepSeekCompletionRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.#withRetry(() => this.#completeOnce(req, signal), signal);
+  }
+
+  async #completeOnce(
     req: DeepSeekCompletionRequest,
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {

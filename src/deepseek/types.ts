@@ -7,6 +7,11 @@ export interface DeepSeekConfig {
   locale?: string;
   timezoneOffset?: string;
   clientVersion?: string;
+  /**
+   * Shell command that prints a fresh token on stdout. Run once when the
+   * device rotation does not produce a new token.
+   */
+  tokenCommand?: string;
 }
 
 export interface DeepSeekCompletionRequest {
