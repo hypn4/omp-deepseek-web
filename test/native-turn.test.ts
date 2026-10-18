@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { needsNativeContinuation } from "../src/deepseek/native-turn";
+import {
+  isRateLimitResult,
+  needsNativeContinuation,
+} from "../src/deepseek/native-turn";
 
 describe("native completion triggers", () => {
   test("continues when incomplete_message is present, including an empty value", () => {
@@ -49,6 +52,42 @@ describe("native completion triggers", () => {
         thinking: "",
         finished: true,
         finishReason: "stop",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("rate-limit detection", () => {
+  test("recognizes the native rate-limit finish reason", () => {
+    expect(
+      isRateLimitResult({
+        text: "",
+        thinking: "",
+        finished: true,
+        finishReason: "rate_limit_reached",
+        errorMessage: "Messages too frequent. Try again later.",
+      }),
+    ).toBe(true);
+  });
+
+  test("recognizes rate-limit text without a finish reason", () => {
+    expect(
+      isRateLimitResult({
+        text: "",
+        thinking: "",
+        finished: true,
+        errorMessage: "Messages too frequent. Try again later.",
+      }),
+    ).toBe(true);
+  });
+
+  test("does not classify unrelated provider errors", () => {
+    expect(
+      isRateLimitResult({
+        text: "",
+        thinking: "",
+        finished: true,
+        errorMessage: "Invalid token",
       }),
     ).toBe(false);
   });

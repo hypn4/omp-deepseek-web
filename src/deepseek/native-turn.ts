@@ -24,7 +24,14 @@ export interface NativeCompletionTransport {
 }
 
 export type NativeCompletionProgress = (result: DeepSeekSseResult) => void;
-export type NativeRecovery = "continue" | "resume";
+export type NativeRecovery = "continue" | "resume" | "rate-limit";
+
+export interface NativeCompletionOptions {
+  /** Additional requests after a rate-limit hint. */
+  rateLimitRetries?: number;
+  /** Initial backoff delay; doubles per retry. */
+  rateLimitDelayMs?: number;
+}
 
 const MAX_NATIVE_RECOVERIES = 2;
 const INCOMPLETE_FINISH_REASONS = new Set([
@@ -53,6 +60,47 @@ function hasUnresolvedOutput(result: DeepSeekSseResult): boolean {
   return needsNativeContinuation(result) || !result.finished;
 }
 
+export function isRateLimitResult(result: DeepSeekSseResult): boolean {
+  const reason = result.finishReason?.toLowerCase();
+  if (
+    reason === "rate_limit_reached" ||
+    reason === "rate_limited" ||
+    reason === "too_many_requests"
+  ) {
+    return true;
+  }
+  return /too frequent|rate limit|try again later/i.test(
+    result.errorMessage ?? "",
+  );
+}
+
+function hasVisibleContent(result: DeepSeekSseResult): boolean {
+  return result.text.length > 0 || result.thinking.length > 0;
+}
+
+async function waitForRetry(
+  milliseconds: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (milliseconds <= 0) {
+    return;
+  }
+  if (signal.aborted) {
+    throw signal.reason ?? new Error("aborted");
+  }
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const timer = setTimeout(() => {
+    signal.removeEventListener("abort", onAbort);
+    resolve();
+  }, milliseconds);
+  const onAbort = (): void => {
+    clearTimeout(timer);
+    reject(signal.reason ?? new Error("aborted"));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  await promise;
+}
+
 /**
  * Runs a completion and follows only native recovery paths. There is no
  * model-free text fallback: if the server does not provide a recoverable
@@ -64,15 +112,45 @@ export async function runNativeCompletion(
   signal: AbortSignal,
   onProgress?: NativeCompletionProgress,
   onRecovery?: (recovery: NativeRecovery) => void,
+  options: NativeCompletionOptions = {},
 ): Promise<DeepSeekSseResult> {
-  let result = await collectCompletion(
-    await transport.complete(request, signal),
-    signal,
+  const maxRateLimitRetries = Math.max(
+    0,
+    Math.trunc(options.rateLimitRetries ?? 2),
+  );
+  const rateLimitDelayMs = Math.max(
+    0,
+    Math.trunc(options.rateLimitDelayMs ?? 5_000),
+  );
+  const collect = async (
+    makeStream: () => Promise<ReadableStream<Uint8Array>>,
+    progress?: NativeCompletionProgress,
+  ): Promise<DeepSeekSseResult> => {
+    for (let attempt = 0; ; attempt += 1) {
+      const next = await collectCompletion(
+        await makeStream(),
+        signal,
+        progress,
+      );
+      if (!isRateLimitResult(next)) {
+        if (next.errorMessage !== undefined) {
+          throw new DeepSeekApiError(-1, next.errorMessage, 200);
+        }
+        return next;
+      }
+      const message = next.errorMessage ?? "DeepSeek rate limit reached";
+      if (hasVisibleContent(next) || attempt >= maxRateLimitRetries) {
+        throw new DeepSeekApiError(-1, message, 429);
+      }
+      onRecovery?.("rate-limit");
+      await waitForRetry(rateLimitDelayMs * 2 ** attempt, signal);
+    }
+  };
+
+  let result = await collect(
+    () => transport.complete(request, signal),
     onProgress,
   );
-  if (result.errorMessage !== undefined) {
-    throw new DeepSeekApiError(-1, result.errorMessage, 200);
-  }
   let text = result.text;
   let thinking = result.thinking;
 
@@ -98,16 +176,16 @@ export async function runNativeCompletion(
 
     if (needsNativeContinuation(result)) {
       onRecovery?.("continue");
-      const next = await collectCompletion(
-        await transport.continueCompletion(
-          {
-            chatSessionId: request.chatSessionId,
-            messageId: result.messageId,
-            fallbackToResume: true,
-          },
-          signal,
-        ),
-        signal,
+      const next = await collect(
+        () =>
+          transport.continueCompletion(
+            {
+              chatSessionId: request.chatSessionId,
+              messageId: result.messageId,
+              fallbackToResume: true,
+            },
+            signal,
+          ),
         progress,
       );
       text = mergeContinuation(text, next.text);
@@ -118,15 +196,15 @@ export async function runNativeCompletion(
 
     if (!result.finished) {
       onRecovery?.("resume");
-      const next = await collectCompletion(
-        await transport.resumeStream(
-          {
-            chatSessionId: request.chatSessionId,
-            messageId: result.messageId,
-          },
-          signal,
-        ),
-        signal,
+      const next = await collect(
+        () =>
+          transport.resumeStream(
+            {
+              chatSessionId: request.chatSessionId,
+              messageId: result.messageId,
+            },
+            signal,
+          ),
         progress,
       );
       text = mergeContinuation(text, next.text);

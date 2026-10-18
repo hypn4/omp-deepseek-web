@@ -182,6 +182,8 @@ omp --no-extensions \
 | `DEEPSEEK_WEB_BUNDLE_ID` | `com.deepseek.chat.nov` | Native client bundle id header. |
 | `DEEPSEEK_WEB_DEVICE_MODEL` | `Android` | Native device-model header. |
 | `DEEPSEEK_WEB_CONTEXT_WINDOW` | `1000000` | Direct web API context limit. The model/API documents 1M; prompts above it return `context_length_exceeded`. |
+| `DEEPSEEK_WEB_RATE_LIMIT_RETRIES` | `2` | Retry a rate-limit hint only when no text/thinking was emitted. |
+| `DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS` | `5000` | Initial backoff; doubles per retry (5s, 10s, ...). |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
 The token and device id are stored at:
@@ -234,6 +236,10 @@ bun extension/install.ts --uninstall
 - **Single account.** One token and one device id are stored; there is no
   multi-account rotation.
 - **No usage or cost reporting.** omp sees zero usage/cost.
+- **Rate limits are account-level.** A rate-limit hint is retried with exponential
+  backoff only when no visible text/thinking was emitted. After the retry budget
+  it is surfaced as an HTTP-429-style provider error; retrying after visible
+  output would duplicate content.
 - **Context window is the direct web API limit.** Live probes against
   `/api/v0/chat/completion` accepted a 900K-token prompt and rejected a prompt
   above 1M tokens with `context_length_exceeded`. This matches the official

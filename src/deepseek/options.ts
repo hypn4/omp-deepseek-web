@@ -19,3 +19,12 @@ export function resolveContextWindow(setting: string | undefined): number {
     ? parsed
     : DEFAULT_WEB_CONTEXT_WINDOW;
 }
+
+/** Parses a non-negative integer setting, falling back on invalid input. */
+export function resolveNonNegativeInt(
+  setting: string | undefined,
+  fallback: number,
+): number {
+  const parsed = Number(setting);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}

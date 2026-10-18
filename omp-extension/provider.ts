@@ -9,6 +9,7 @@ import {
   needsNativeContinuation,
   runNativeCompletion,
 } from "../src/deepseek/native-turn";
+import { resolveNonNegativeInt } from "../src/deepseek/options";
 import { stripToolMarkup } from "../src/openai/translate";
 import { parseToolCalls } from "../src/tools/parser";
 import type { EventSink, ModelIdentity } from "./events";
@@ -90,6 +91,10 @@ export interface ProviderTurnOptions {
   thinkingEnabled?: boolean;
   /** Web search; enabled by default. */
   searchEnabled?: boolean;
+  /** Override rate-limit retries; defaults to DEEPSEEK_WEB_RATE_LIMIT_RETRIES. */
+  rateLimitRetries?: number;
+  /** Override initial rate-limit backoff; defaults to DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS. */
+  rateLimitDelayMs?: number;
 }
 
 /**
@@ -207,8 +212,21 @@ export async function runDeepSeekTurn(
         deps.onStatus?.(
           recovery === "continue"
             ? "DeepSeek Web: continuing…"
-            : "DeepSeek Web: resuming…",
+            : recovery === "resume"
+              ? "DeepSeek Web: resuming…"
+              : "DeepSeek Web: rate limited, retrying…",
         );
+      },
+      {
+        rateLimitRetries:
+          options.rateLimitRetries ??
+          resolveNonNegativeInt(process.env.DEEPSEEK_WEB_RATE_LIMIT_RETRIES, 2),
+        rateLimitDelayMs:
+          options.rateLimitDelayMs ??
+          resolveNonNegativeInt(
+            process.env.DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS,
+            5_000,
+          ),
       },
     );
 

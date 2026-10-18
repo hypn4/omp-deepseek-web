@@ -203,9 +203,16 @@ async function run(
     messages: [{ role: "user", content: "hello" }],
   },
   signal?: AbortSignal,
+  turnOptions: { rateLimitRetries?: number; rateLimitDelayMs?: number } = {},
 ): Promise<FakeSink> {
   const sink = new FakeSink();
-  await runDeepSeekTurn(deps, MODEL, context, { signal }, sink);
+  await runDeepSeekTurn(
+    deps,
+    MODEL,
+    context,
+    { signal, ...turnOptions },
+    sink,
+  );
   return sink;
 }
 
@@ -339,6 +346,55 @@ describe("DeepSeek omp provider", () => {
       { type: "text", text: "part one part two part three" },
     ]);
     expect(sink.ended?.stopReason).toBe("length");
+  });
+
+  test("retries a rate-limit hint before succeeding", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          {
+            text: "",
+            messageId: 2,
+            finishReason: "rate_limit_reached",
+            errorMessage: "Messages too frequent. Try again later.",
+          },
+          { text: "OK", messageId: 4 },
+        ],
+        onComplete: (request) => requests.push(request),
+      }),
+      undefined,
+      undefined,
+      { rateLimitDelayMs: 0, rateLimitRetries: 1 },
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(sink.failure).toBeUndefined();
+    expect(sink.ended?.content).toEqual([{ type: "text", text: "OK" }]);
+  });
+
+  test("does not retry a rate-limit hint after visible content", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          {
+            text: "partial",
+            messageId: 2,
+            finishReason: "rate_limit_reached",
+            errorMessage: "Messages too frequent. Try again later.",
+          },
+        ],
+        onComplete: (request) => requests.push(request),
+      }),
+      undefined,
+      undefined,
+      { rateLimitDelayMs: 0, rateLimitRetries: 2 },
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(sink.failure).toBeInstanceOf(DeepSeekApiError);
+    expect(String(sink.failure)).toContain("Messages too frequent");
   });
 
   test("surfaces a native context-length hint as an error", async () => {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_WEB_CONTEXT_WINDOW,
   resolveContextWindow,
+  resolveNonNegativeInt,
   resolveThinkingEnabled,
 } from "../src/deepseek/options";
 
@@ -29,5 +30,14 @@ describe("web context window", () => {
     expect(resolveContextWindow("1000000")).toBe(1_000_000);
     expect(resolveContextWindow("0")).toBe(DEFAULT_WEB_CONTEXT_WINDOW);
     expect(resolveContextWindow("nope")).toBe(DEFAULT_WEB_CONTEXT_WINDOW);
+  });
+});
+
+describe("rate-limit settings", () => {
+  test("accepts non-negative integers and falls back on invalid input", () => {
+    expect(resolveNonNegativeInt("3", 2)).toBe(3);
+    expect(resolveNonNegativeInt("0", 2)).toBe(0);
+    expect(resolveNonNegativeInt("-1", 2)).toBe(2);
+    expect(resolveNonNegativeInt("nope", 2)).toBe(2);
   });
 });
