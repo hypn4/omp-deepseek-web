@@ -1,5 +1,5 @@
 import { AssistantMessageEventStream } from "@oh-my-pi/pi-ai";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import {
   DEFAULT_DEVICE_ID_PATH,
@@ -8,7 +8,6 @@ import {
   writeAuthValue,
 } from "../src/auth/token-store";
 import { DeepSeekClient } from "../src/deepseek/client";
-import { emitBufferedCompletion } from "./events";
 import type { PromptContext, PromptTool } from "./prompt";
 import { buildOmpPrompt } from "./prompt";
 import { runDeepSeekTurn } from "./provider";
@@ -38,13 +37,19 @@ function promptFor(context: PromptContext): string {
 }
 
 export default function deepseekWebExtension(pi: ExtensionAPI): void {
+  let activeContext: ExtensionContext | undefined;
+  const setStatus = (status: string | null): void => {
+    activeContext?.ui.setStatus("deepseek-web", status ?? "");
+  };
+
   pi.setLabel("DeepSeek Web");
   pi.on("session_start", (_event, ctx) => {
+    activeContext = ctx;
     const hasToken = readAuthValue(DEFAULT_TOKEN_PATH) !== null;
-    ctx.ui.setStatus(
-      "deepseek-web",
-      hasToken ? "DeepSeek Web ✓" : "DeepSeek Web: token missing",
-    );
+    setStatus(hasToken ? "DeepSeek Web ✓" : "DeepSeek Web: token missing");
+  });
+  pi.on("session_shutdown", () => {
+    activeContext = undefined;
   });
 
   pi.registerProvider(PROVIDER_ID, {
@@ -77,7 +82,7 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
               tokenCommand: process.env.DEEPSEEK_WEB_TOKEN_CMD,
             }),
           buildPrompt: promptFor,
-          emit: emitBufferedCompletion,
+          onStatus: setStatus,
         },
         { api: model.api, provider: model.provider, id: model.id },
         context as unknown as PromptContext,

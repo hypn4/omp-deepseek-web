@@ -4,7 +4,6 @@ import { DeepSeekApiError } from "../src/deepseek/client";
 import type { DeepSeekCompletionRequest } from "../src/deepseek/types";
 import type { ParsedToolCall } from "../src/tools/parser";
 import { collectCompletion } from "../omp-extension/collect";
-import { emitBufferedCompletion } from "../omp-extension/events";
 import type { EventSink, ModelIdentity } from "../omp-extension/events";
 import { runDeepSeekTurn } from "../omp-extension/provider";
 import type { ProviderDeps } from "../omp-extension/provider";
@@ -101,7 +100,6 @@ function providerDeps(options: {
     readDeviceId: () => "device-1",
     createClient: () => client,
     buildPrompt: () => "rendered prompt",
-    emit: emitBufferedCompletion,
   };
 }
 
@@ -262,5 +260,35 @@ describe("DeepSeek omp provider", () => {
     );
 
     expect(result.text).toBe("partial");
+  });
+
+  test("reports incremental progress before the stream finishes", async () => {
+    const chunks = [
+      `data: {"v":{"response":{"fragments":[{"type":"RESPONSE","content":"hel"}]}}}\n\n`,
+      `data: {"v":"lo"}\n\ndata: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n`,
+    ];
+    let index = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[index];
+        index += 1;
+        if (chunk === undefined) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new TextEncoder().encode(chunk));
+      },
+    });
+    const progress: string[] = [];
+
+    const result = await collectCompletion(
+      stream,
+      new AbortController().signal,
+      (snapshot) => progress.push(snapshot.text),
+    );
+
+    expect(result.text).toBe("hello");
+    expect(progress).toContain("hel");
+    expect(progress.at(-1)).toBe("hello");
   });
 });

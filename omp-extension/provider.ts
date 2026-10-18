@@ -3,11 +3,8 @@ import type { DeepSeekCompletionRequest } from "../src/deepseek/types";
 import { stripToolMarkup } from "../src/openai/translate";
 import { parseToolCalls } from "../src/tools/parser";
 import { collectCompletion } from "./collect";
-import type {
-  BufferedCompletion,
-  EventSink,
-  ModelIdentity,
-} from "./events";
+import type { EventSink, ModelIdentity } from "./events";
+import { StreamingCompletion } from "./events";
 import { collectTurnImages } from "./prompt";
 import type { PromptContext, PromptImage } from "./prompt";
 
@@ -31,11 +28,7 @@ export interface ProviderDeps {
   readDeviceId(): string | null;
   createClient(token: string, deviceId: string): DeepSeekClientLike;
   buildPrompt(context: PromptContext): string;
-  emit(
-    stream: EventSink,
-    model: ModelIdentity,
-    completion: BufferedCompletion,
-  ): void;
+  onStatus?(status: string | null): void;
 }
 
 function tokenError(error: unknown): Error {
@@ -57,6 +50,22 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 function imageName(image: PromptImage, index: number): string {
   const extension = IMAGE_EXTENSIONS[image.mimeType] ?? "bin";
   return `image-${index + 1}.${extension}`;
+}
+
+function searchStatusLabel(status: string): string {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("search")) {
+    return "DeepSeek Web: searching…";
+  }
+  if (
+    normalized.includes("finish") ||
+    normalized.includes("done") ||
+    normalized.includes("complete") ||
+    normalized.includes("composing")
+  ) {
+    return "DeepSeek Web: composing…";
+  }
+  return `DeepSeek Web: ${normalized}`;
 }
 
 export interface ProviderTurnOptions {
@@ -106,6 +115,10 @@ export async function runDeepSeekTurn(
     return;
   }
 
+  const emitter = new StreamingCompletion(stream, model);
+  emitter.start();
+  deps.onStatus?.("DeepSeek Web: thinking…");
+
   let client: DeepSeekClientLike | null = null;
   let sessionId: string | null = null;
   const signal = options.signal ?? new AbortController().signal;
@@ -118,6 +131,7 @@ export async function runDeepSeekTurn(
       if (client.uploadFile === undefined || client.waitForFileReady === undefined) {
         throw new Error("This client does not support image input.");
       }
+      deps.onStatus?.("DeepSeek Web: uploading image…");
       for (const [index, image] of images.entries()) {
         const id = await client.uploadFile({
           data: Buffer.from(image.data, "base64"),
@@ -140,9 +154,40 @@ export async function runDeepSeekTurn(
       },
       signal,
     );
-    const result = await collectCompletion(upstream, signal);
+
+    let lastText = "";
+    let lastThinking = "";
+    let lastSearchStatus: string | undefined;
+    const result = await collectCompletion(upstream, signal, (snapshot) => {
+      if (snapshot.thinking !== lastThinking) {
+        const delta = snapshot.thinking.startsWith(lastThinking)
+          ? snapshot.thinking.slice(lastThinking.length)
+          : snapshot.thinking;
+        if (delta.length > 0) {
+          emitter.thinkingDelta(delta);
+        }
+        lastThinking = snapshot.thinking;
+      }
+      if (snapshot.text !== lastText) {
+        const delta = snapshot.text.startsWith(lastText)
+          ? snapshot.text.slice(lastText.length)
+          : snapshot.text;
+        if (delta.length > 0) {
+          emitter.textDelta(delta);
+        }
+        lastText = snapshot.text;
+      }
+      if (
+        snapshot.searchStatus !== undefined &&
+        snapshot.searchStatus !== lastSearchStatus
+      ) {
+        lastSearchStatus = snapshot.searchStatus;
+        deps.onStatus?.(searchStatusLabel(snapshot.searchStatus));
+      }
+    });
+
     if (signal.aborted) {
-      stream.fail(signal.reason ?? new Error("DeepSeek request aborted"));
+      emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
       return;
     }
 
@@ -150,17 +195,16 @@ export async function runDeepSeekTurn(
       (context.tools?.length ?? 0) > 0 ? parseToolCalls(result.text) : [];
     const text =
       toolCalls.length > 0 ? stripToolMarkup(result.text) : result.text;
-    deps.emit(stream, model, {
+    emitter.finish({
       text,
       thinking: result.thinking,
       toolCalls,
     });
+    deps.onStatus?.("DeepSeek Web ✓");
   } catch (error) {
-    if (signal.aborted) {
-      stream.fail(signal.reason ?? error);
-    } else {
-      stream.fail(tokenError(error));
-    }
+    const failure = signal.aborted ? (signal.reason ?? error) : tokenError(error);
+    emitter.fail(failure);
+    deps.onStatus?.("DeepSeek Web: error");
   } finally {
     if (client !== null && sessionId !== null) {
       try {

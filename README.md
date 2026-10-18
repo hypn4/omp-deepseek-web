@@ -17,7 +17,8 @@ repository and plugin package name changed.
 ## Features
 
 - `deepseek-web/deepseek-web` model in omp
-- DeepThink and web search enabled by default
+- Incremental thinking/text streaming, with web-search progress in the omp status
+  line (`searching…`, `composing…`)
 - Text and image input (PNG, JPEG, WebP, GIF)
 - omp tools (`read`, `edit`, `write`, `bash`, …) through a text tool-call bridge
 - Chrome native-messaging token bridge with owner-only token files
@@ -202,8 +203,9 @@ bun extension/install.ts --uninstall
 
 - **Unofficial web API.** Endpoints, PoW, response shapes, and tool-call behavior
   can change at any time.
-- **Buffered streaming.** The provider collects the complete upstream response
-  before emitting omp events; text is not incremental.
+- **Streaming tool calls.** Thinking and answer text stream incrementally, but
+  tool calls are emitted after the response completes because the text protocol
+  must be parsed as a whole.
 - **Text tool bridge.** DeepSeek web has no native tool calling. Tool calls are
   parsed from a prompted format and can break if the model or hidden system
   prompt changes.

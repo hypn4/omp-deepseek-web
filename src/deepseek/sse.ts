@@ -7,6 +7,8 @@ export interface DeepSeekSseResult {
   text: string;
   thinking: string;
   finished: boolean;
+  /** Current web-search phase reported by the web API, when present. */
+  searchStatus?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -105,6 +107,20 @@ export class DeepSeekSseParser {
     const text: string[] = [];
     const thinking: string[] = [];
     const fragments = this.#get("response/fragments");
+    const response = this.#get("response");
+    let searchStatus: string | undefined;
+    let hasSearchFragment = false;
+    if (typeof response === "object" && response !== null) {
+      const rawStatus = (response as JsonRecord).search_status;
+      if (typeof rawStatus === "string" && rawStatus !== "") {
+        searchStatus = rawStatus;
+      } else if (typeof rawStatus === "object" && rawStatus !== null) {
+        const nested = (rawStatus as JsonRecord).status;
+        if (typeof nested === "string" && nested !== "") {
+          searchStatus = nested;
+        }
+      }
+    }
 
     if (Array.isArray(fragments)) {
       for (const fragment of fragments) {
@@ -112,6 +128,12 @@ export class DeepSeekSseParser {
           continue;
         }
         const entry = fragment as JsonRecord;
+        if (
+          typeof entry.content !== "string" &&
+          (entry.type === "TOOL_SEARCH" || entry.type === "TOOL_OPEN")
+        ) {
+          hasSearchFragment = true;
+        }
         if (typeof entry.content !== "string") {
           continue;
         }
@@ -123,7 +145,16 @@ export class DeepSeekSseParser {
       }
     }
 
-    return { text: text.join(""), thinking: thinking.join(""), finished: this.#finished };
+    if (hasSearchFragment) {
+      searchStatus = text.length > 0 ? "composing" : "searching";
+    }
+
+    return {
+      text: text.join(""),
+      thinking: thinking.join(""),
+      finished: this.#finished,
+      ...(searchStatus === undefined ? {} : { searchStatus }),
+    };
   }
 
   #handleLine(line: string): void {

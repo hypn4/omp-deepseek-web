@@ -118,6 +118,36 @@ describe("DeepSeekSseParser", () => {
     });
   });
 
+  test("extracts the web-search status", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      'data: {"v":{"response":{"search_status":"SEARCHING","fragments":[]}}}\n\n',
+    );
+
+    expect(parser.result()).toEqual({
+      text: "",
+      thinking: "",
+      finished: false,
+      searchStatus: "SEARCHING",
+    });
+  });
+
+  test("derives searching and composing from search fragments", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      'data: {"v":{"response":{"fragments":[{"type":"TOOL_SEARCH","content":null,"queries":[]}]}}}\n\n',
+    );
+    expect(parser.result().searchStatus).toBe("searching");
+
+    parser.feed(
+      'data: {"p":"response/fragments","o":"APPEND","v":[{"type":"RESPONSE","content":"answer"}]}\n\n',
+    );
+    expect(parser.result()).toMatchObject({
+      text: "answer",
+      searchStatus: "composing",
+    });
+  });
+
   test("ignores an unpathed __proto__ key", () => {
     const parser = new DeepSeekSseParser();
     parser.feed(
