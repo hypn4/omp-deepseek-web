@@ -43,14 +43,26 @@ function promptFor(context: PromptContext): string {
 export default function deepseekWebExtension(pi: ExtensionAPI): void {
   let activeContext: ExtensionContext | undefined;
   const setStatus = (status: string | null): void => {
-    activeContext?.ui.setStatus("deepseek-web", status ?? "");
+    activeContext?.ui.setStatus("deepseek-web", status ?? undefined);
+  };
+  const refreshStatus = (ctx: ExtensionContext): void => {
+    activeContext = ctx;
+    if (ctx.model?.provider !== PROVIDER_ID || ctx.model.id !== MODEL_ID) {
+      setStatus(null);
+      return;
+    }
+    const hasToken = readAuthValue(DEFAULT_TOKEN_PATH) !== null;
+    setStatus(hasToken ? "DeepSeek Web ✓" : "DeepSeek Web: token missing");
   };
 
   pi.setLabel("DeepSeek Web");
   pi.on("session_start", (_event, ctx) => {
-    activeContext = ctx;
-    const hasToken = readAuthValue(DEFAULT_TOKEN_PATH) !== null;
-    setStatus(hasToken ? "DeepSeek Web ✓" : "DeepSeek Web: token missing");
+    refreshStatus(ctx);
+  });
+  // Model switches can happen mid-session; refresh before each turn so the
+  // provider badge is only present while the deepseek-web model is active.
+  pi.on("before_agent_start", (_event, ctx) => {
+    refreshStatus(ctx);
   });
   pi.on("session_shutdown", () => {
     activeContext = undefined;
