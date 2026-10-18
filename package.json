@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/server.ts",
+    "login": "bun run scripts/login.ts",
     "test": "bun test"
   }
 }
