@@ -3,8 +3,8 @@
 Use a free [chat.deepseek.com](https://chat.deepseek.com) account as an
 [omp](https://github.com/can1357/oh-my-pi) provider.
 
-The provider runs inside omp as a command-backed extension. There is no local
-HTTP proxy, port, or model gateway.
+The provider runs inside omp as an in-process extension. There is no local HTTP
+proxy, port, or model gateway.
 
 The provider and model id remain `deepseek-web/deepseek-web`; only the
 repository and plugin package name changed.
@@ -44,24 +44,27 @@ platforms, adapt [`extension/install.ts`](./extension/install.ts).
 
 ```mermaid
 flowchart LR
-  A[chat.deepseek.com] --> B[Chrome extension]
+  A[chat.deepseek.com login] --> B[Chrome extension]
   B --> C[native messaging host]
   C --> D[token files 0600]
-  E[omp session] --> F[deepseek-web extension]
-  F --> D
-  F --> G[DeepSeek web API]
-  F --> H[omp tools]
+  E[omp session] --> F[deepseek-web provider]
+  D --> F
+  F --> G[DeepSeek native API]
+  G -->|completion / continue / resume SSE| F
+  F --> H[dynamic omp tools]
 ```
 
-- [`omp-extension/`](./omp-extension) registers the command-backed provider and
-  bridges DeepSeek text tool calls to omp.
+- [`omp-extension/`](./omp-extension) registers the provider, maps omp events,
+  handles native completion recovery, and bridges text tool calls. Tool
+  definitions come from omp's live context; there is no fixed tool allowlist.
 - [`extension/`](./extension) reads the token from the DeepSeek web app and sends
   it to a native messaging host.
 - [`extension/native-host/`](./extension/native-host) writes the token and device
   id to `~/.omp/agent` with mode `0600`.
-- [`src/deepseek/`](./src/deepseek) contains the web transport, PoW solver, and
-  SSE parser.
-- [`src/tools/`](./src/tools) contains the prompt renderer and tool-call parser.
+- [`src/deepseek/`](./src/deepseek) contains the native client, PoW solver, SSE
+  parser, continuation controller, and stream merge logic.
+- [`src/tools/`](./src/tools) contains the dynamic prompt renderer, language
+  policy, and tool-call parser.
 
 ## Install
 
@@ -113,14 +116,11 @@ popup.
 omp plugin install github:hypn4/omp-deepseek-web
 ```
 
-> The GitHub shorthand requires public repository access. While this repository
-> is private, clone it and use `omp plugin link` below instead. Once the
-> repository is public, the command above works without extra setup.
-
-This is the primary installation path. The plugin manifest loads
+This is the primary installation path. The repository is public, so the
+GitHub shorthand resolves without extra setup. The plugin manifest loads
 `omp-extension/index.ts`, so no `models.yml` entry or manual `extensions:` edit
-is required. Manage it with `omp plugin list`, `omp plugin upgrade omp-deepseek-web`,
-`omp plugin disable omp-deepseek-web`, or
+is required. Manage it with `omp plugin list`,
+`omp plugin upgrade omp-deepseek-web`, `omp plugin disable omp-deepseek-web`, or
 `omp plugin uninstall omp-deepseek-web`.
 
 For local development from a clone, use `plugin link` instead:
@@ -216,6 +216,9 @@ bun extension/install.ts --uninstall
 - **Streaming tool calls.** Thinking and answer text stream incrementally, but
   tool calls are emitted after the response completes because the text protocol
   must be parsed as a whole.
+- **Two search paths.** Native DeepSeek search is enabled by default, while
+  omp's dynamically supplied `web_search` tool remains available. The model may
+  choose either; there is no hardcoded preference.
 - **Recovery depends on native signals.** The provider follows
   `incomplete_message`/length finish reasons through `/chat/continue`, and
   reconnects an interrupted stream through `/chat/resume_stream`. It does not
