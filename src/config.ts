@@ -1,9 +1,20 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { DeepSeekCompletionRequest } from "./deepseek/types";
 
 export const DEFAULT_PORT = 8787;
 export const DEFAULT_HOSTNAME = "127.0.0.1";
 export const DEFAULT_BASE_URL = "https://chat.deepseek.com";
 export const DEFAULT_MAX_PROMPT_CHARS = 400000;
+
+/** Device id persisted by `scripts/login.ts`, reused when the env var is unset. */
+export const DEFAULT_DEVICE_ID_PATH = join(
+  homedir(),
+  ".omp",
+  "agent",
+  ".deepseek-web-device-id",
+);
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -61,6 +72,22 @@ function readFlag(value: string | undefined): boolean {
   return value === "1" || value?.toLowerCase() === "true";
 }
 
+function readStoredDeviceId(path: string): string | undefined {
+  try {
+    const stored = readFileSync(path, "utf8").trim();
+    return stored === "" ? undefined : stored;
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? error.code
+        : undefined;
+    if (code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 function readLogLevel(value: string | undefined): LogLevel {
   if (value === "debug" || value === "warn" || value === "error") {
     return value;
@@ -71,18 +98,26 @@ function readLogLevel(value: string | undefined): LogLevel {
 /**
  * Reads the proxy configuration from environment variables.
  *
- * The proxy always binds to loopback. The device id defaults to a fresh UUID
- * per process; set `DEEPSEEK_WEB_DEVICE_ID` to keep it stable across restarts.
+ * The proxy always binds to loopback. The device id comes from
+ * `DEEPSEEK_WEB_DEVICE_ID`, then the file written by `bun run login`, then a
+ * fresh UUID per process.
  */
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
+  options: { deviceIdPath?: string } = {},
 ): ServerConfig {
   const tokenCommand = env.DEEPSEEK_WEB_TOKEN_CMD?.trim();
+  const configuredDeviceId = env.DEEPSEEK_WEB_DEVICE_ID?.trim();
+  const deviceId =
+    configuredDeviceId !== undefined && configuredDeviceId !== ""
+      ? configuredDeviceId
+      : (readStoredDeviceId(options.deviceIdPath ?? DEFAULT_DEVICE_ID_PATH) ??
+        globalThis.crypto.randomUUID());
   return {
     port: readInteger(env.DEEPSEEK_WEB_PORT, DEFAULT_PORT),
     hostname: DEFAULT_HOSTNAME,
     baseUrl: env.DEEPSEEK_WEB_BASE_URL ?? DEFAULT_BASE_URL,
-    deviceId: env.DEEPSEEK_WEB_DEVICE_ID ?? globalThis.crypto.randomUUID(),
+    deviceId,
     maxPromptChars: readPositiveInteger(
       env.DEEPSEEK_WEB_MAX_PROMPT_CHARS,
       DEFAULT_MAX_PROMPT_CHARS,

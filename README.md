@@ -67,9 +67,19 @@ and uses the rotated token when DeepSeek supplies one.
 bun run start
 ```
 
-It listens on `http://127.0.0.1:8787` only. The token is not read from the
-environment by the proxy: omp sends it as `Authorization: Bearer <token>` on every
-request, and the proxy forwards it upstream. Do not open the port to the network.
+It listens on `http://127.0.0.1:8787` only. The proxy reads the device id saved
+by `bun run login` from `~/.omp/agent/.deepseek-web-device-id`; to apply other
+settings from `~/.omp/agent/.env` (port, log level, token command), load that
+file first:
+
+```bash
+set -a; . ~/.omp/agent/.env; set +a
+bun run start
+```
+
+The token is not read from the environment by the proxy: omp sends it as
+`Authorization: Bearer <token>` on every chat request, and the proxy forwards it
+upstream. Do not open the port to the network.
 
 Quick check:
 
@@ -83,15 +93,14 @@ curl -s http://127.0.0.1:8787/v1/models \
 
 Copy the block from [`models.example.yml`](./models.example.yml) into
 `~/.omp/agent/models.yml` (merge it under the existing `providers:` key; do not
-replace that file's other providers), and replace `/abs/path` with the absolute
-path to this repository:
+replace that file's other providers):
 
 ```yaml
 providers:
   deepseek-web:
     baseUrl: http://127.0.0.1:8787/v1
     api: openai-completions
-    apiKey: "!bun run /abs/path/scripts/login.ts --print-token"
+    apiKey: DEEPSEEK_WEB_TOKEN
     authHeader: true
     models:
       - id: deepseek-web
@@ -110,16 +119,13 @@ providers:
 `models.example.yml` is not an active models file, so `omp models find deepseek-web`
 finds nothing until you copy the block into the active file.
 
-If you ran `bun run login --write-env`, the simpler configuration points at the
-environment variable instead of running the login helper:
+`bun run login --write-env` stores the token in `~/.omp/agent/.env`, which omp
+loads automatically, so `apiKey: DEEPSEEK_WEB_TOKEN` is the working form.
 
-```yaml
-    apiKey: DEEPSEEK_WEB_TOKEN
-```
-
-`omp` loads `~/.omp/agent/.env` automatically. The `!` command form exists for the
-case where the token is fetched by a non-interactive helper; the bundled login
-helper is interactive, so prefer the environment-variable form for day-to-day use.
+The bundled login helper is interactive: it waits for a pasted redirect URL.
+omp runs `!` command-backed keys with a 10 s timeout and no stdin, so the
+commented `!bun run ... --print-token` line in `models.example.yml` is only a
+placeholder for a future non-interactive helper, not a working configuration.
 
 Verify:
 
@@ -138,16 +144,17 @@ tool, see limitations below.
 | --- | --- | --- |
 | `DEEPSEEK_WEB_PORT` | `8787` | Proxy port |
 | `DEEPSEEK_WEB_TOKEN` | — | Web token; referenced by `models.yml`, not read by the proxy |
-| `DEEPSEEK_WEB_DEVICE_ID` | generated UUID | Stable `x-device-id`; written by `bun run login` |
+| `DEEPSEEK_WEB_DEVICE_ID` | saved id, else UUID | Stable `x-device-id`; overrides the file written by `bun run login` |
 | `DEEPSEEK_WEB_THINKING` | `0` | `1` enables DeepThink for requests without tools |
 | `DEEPSEEK_WEB_SEARCH` | `0` | `1` enables web search |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Command whose stdout is a fresh token after a 401 |
 | `DEEPSEEK_WEB_MAX_PROMPT_CHARS` | `400000` | Prompt length cap |
 | `DEEPSEEK_WEB_LOG_LEVEL` | `info` | `debug` adds stream-error detail; prompts and tokens are never logged |
 
-A device id generated at process start differs from the one saved by `bun run
-login`; export `DEEPSEEK_WEB_DEVICE_ID` (as `.env` does for omp) if DeepSeek's
-token checks are strict about it.
+When `DEEPSEEK_WEB_DEVICE_ID` is unset, the proxy reads
+`~/.omp/agent/.deepseek-web-device-id` (the file `bun run login` writes) and uses
+its trimmed content. A random UUID is generated only when that file is missing or
+empty.
 
 ## Known limitations
 
@@ -172,8 +179,9 @@ token checks are strict about it.
 - **Streaming is buffered.** The proxy collects the full upstream response before
   emitting chunks; tokens do not appear incrementally. `stream: false` is also
   supported.
-- **Usage is approximate.** Token counts come from `accumulated_token_usage` and
-  are not billing-exact. `contextWindow: 128000` is an estimate.
+- **Usage is not reported.** The proxy does not emit a `usage` object, so token
+  counts are whatever omp estimates locally. `contextWindow: 128000` is an
+  estimate.
 - **Single account.** On an auth error the proxy checks `auth_token/check_device`
   and adopts a rotated token when DeepSeek supplies one, and
   `DEEPSEEK_WEB_TOKEN_CMD` can fetch a fresh token, but there is no multi-account

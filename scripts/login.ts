@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { DEFAULT_DEVICE_ID_PATH } from "../src/config";
 import { loadOrCreateDeviceId } from "../src/login/device";
 import {
   LoginError,
@@ -13,12 +14,6 @@ import {
 export const TOKEN_ENV_KEY = "DEEPSEEK_WEB_TOKEN";
 export const DEVICE_ID_ENV_KEY = "DEEPSEEK_WEB_DEVICE_ID";
 export const DEFAULT_ENV_PATH = join(homedir(), ".omp", "agent", ".env");
-export const DEFAULT_DEVICE_ID_PATH = join(
-  homedir(),
-  ".omp",
-  "agent",
-  ".deepseek-web-device-id",
-);
 
 const USAGE = `Usage: bun run login [options]
 
