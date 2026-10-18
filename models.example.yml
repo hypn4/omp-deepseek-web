@@ -3,26 +3,23 @@
 # Copy this block into ~/.omp/agent/models.yml, merging it under the existing
 # top-level `providers:` key.
 #
-# Start the proxy first (`bun run start`), then verify with:
+# Start the proxy first (`bun run start`), load the DeepSeek Token Bridge
+# extension from `extension/`, and sign in at https://chat.deepseek.com.
+# The extension writes the real token to ~/.omp/agent/deepseek-web-token; the
+# proxy reads it at startup and on every POST /login/token.
+#
+# `local` is a dummy credential so omp selects the provider. The proxy ignores
+# it: when a stored token is present, that token is used for DeepSeek.
+#
+# Verify with:
 #   omp models find deepseek-web
 #   omp --model deepseek-web/deepseek-web
-#
-# `bun run login --write-env` stores DEEPSEEK_WEB_TOKEN in ~/.omp/agent/.env,
-# which omp loads automatically. That environment-variable form is the working
-# configuration.
-#
-# Advanced: a future non-interactive helper could supply a command-backed key.
-# omp runs `!` values with a 10 s timeout and no stdin, so the bundled
-# interactive login helper (it waits for a pasted redirect URL) cannot complete
-# this way:
-#
-#   apiKey: "!bun run /abs/path/scripts/login.ts --print-token"
 
 providers:
   deepseek-web:
     baseUrl: http://127.0.0.1:8787/v1
     api: openai-completions
-    apiKey: DEEPSEEK_WEB_TOKEN
+    apiKey: local
     authHeader: true
     models:
       - id: deepseek-web

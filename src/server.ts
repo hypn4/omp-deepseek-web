@@ -1,10 +1,16 @@
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_DEVICE_ID_PATH,
   DEFAULT_HOSTNAME,
   DEFAULT_MAX_PROMPT_CHARS,
   DEFAULT_PORT,
   loadConfig,
 } from "./config";
+import {
+  DEFAULT_TOKEN_PATH,
+  readAuthValue,
+  writeAuthValue,
+} from "./auth/token-store";
 import type {
   CompletionClient,
   LogLevel,
@@ -40,6 +46,9 @@ interface ResolvedConfig {
   thinking: boolean;
   search: boolean;
   logLevel: LogLevel;
+  tokenPath: string;
+  deviceIdPath: string;
+  auth: { token: string | null; deviceId: string };
   createClient: (token: string) => CompletionClient;
 }
 
@@ -51,7 +60,12 @@ export interface RunningServer {
 
 function resolveConfig(config: ServerConfig): ResolvedConfig {
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
-  const deviceId = config.deviceId ?? globalThis.crypto.randomUUID();
+  const tokenPath = config.tokenPath ?? DEFAULT_TOKEN_PATH;
+  const deviceIdPath = config.deviceIdPath ?? DEFAULT_DEVICE_ID_PATH;
+  const auth = {
+    token: readAuthValue(tokenPath),
+    deviceId: config.deviceId ?? globalThis.crypto.randomUUID(),
+  };
   return {
     port: config.port ?? DEFAULT_PORT,
     hostname: config.hostname ?? DEFAULT_HOSTNAME,
@@ -59,13 +73,16 @@ function resolveConfig(config: ServerConfig): ResolvedConfig {
     thinking: config.thinking ?? false,
     search: config.search ?? false,
     logLevel: config.logLevel ?? "info",
+    tokenPath,
+    deviceIdPath,
+    auth,
     createClient:
       config.createClient ??
       ((token) =>
         new DeepSeekClient({
           baseUrl,
           token,
-          deviceId,
+          deviceId: auth.deviceId,
           tokenCommand: config.tokenCommand,
         })),
   };
@@ -334,7 +351,7 @@ function mapError(error: unknown): Response {
   if (error instanceof TokenError) {
     return errorResponse(
       401,
-      "DeepSeek token is invalid or expired. Run `bun run login` to refresh it.",
+      "DeepSeek token is invalid or expired. Open chat.deepseek.com with the DeepSeek Token Bridge extension installed.",
       "authentication_error",
       "invalid_api_key",
     );
@@ -399,11 +416,12 @@ async function handleChatCompletion(
   request: Request,
   config: ResolvedConfig,
 ): Promise<Response> {
-  const token = bearerToken(request);
+  const incomingToken = bearerToken(request);
+  const token = config.auth.token ?? incomingToken;
   if (token === null) {
     return errorResponse(
       401,
-      "Missing bearer token. Run `bun run login` to obtain a DeepSeek token.",
+      "No DeepSeek token is available. Open chat.deepseek.com with the DeepSeek Token Bridge extension installed, or POST a token to /login/token.",
       "authentication_error",
       "invalid_api_key",
     );
@@ -489,6 +507,73 @@ async function handleChatCompletion(
   }
 }
 
+const LOGIN_CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "cache-control": "no-store",
+};
+
+function loginError(status: number, message: string, code: string): Response {
+  return Response.json(
+    { error: { message, type: "invalid_request_error", code } },
+    { status, headers: LOGIN_CORS_HEADERS },
+  );
+}
+
+/**
+ * Receives the web session token from the browser extension. The token is
+ * written with owner-only permissions and never logged or returned.
+ */
+async function handleLoginToken(
+  request: Request,
+  config: ResolvedConfig,
+): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: LOGIN_CORS_HEADERS });
+  }
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return loginError(400, "Request body must be valid JSON.", "invalid_json");
+  }
+
+  const record = asRecord(raw);
+  const token = record?.token;
+  if (typeof token !== "string" || token.trim() === "" || token.length > 4096) {
+    return loginError(400, "token must be a non-empty string.", "invalid_token");
+  }
+  const deviceId = record?.deviceId;
+  if (
+    deviceId !== undefined &&
+    (typeof deviceId !== "string" || deviceId.trim() === "")
+  ) {
+    return loginError(
+      400,
+      "deviceId must be a non-empty string when provided.",
+      "invalid_device_id",
+    );
+  }
+
+  try {
+    config.auth.token = token.trim();
+    writeAuthValue(config.tokenPath, config.auth.token);
+    if (typeof deviceId === "string") {
+      config.auth.deviceId = deviceId.trim();
+      writeAuthValue(config.deviceIdPath, config.auth.deviceId);
+    }
+  } catch (error) {
+    console.error(
+      `[deepseek-web] failed to store login token: ${errorMessage(error)}`,
+    );
+    return loginError(500, "Failed to store the token.", "storage_error");
+  }
+
+  return Response.json({ ok: true }, { headers: LOGIN_CORS_HEADERS });
+}
+
 async function handleRequest(
   request: Request,
   config: ResolvedConfig,
@@ -497,6 +582,18 @@ async function handleRequest(
 
   if (request.method === "GET" && pathname === "/v1/models") {
     return modelsResponse();
+  }
+  if (pathname === "/login/token") {
+    if (request.method === "POST" || request.method === "OPTIONS") {
+      return handleLoginToken(request, config);
+    }
+    return loginError(405, "Use POST /login/token.", "method_not_allowed");
+  }
+  if (request.method === "GET" && pathname === "/login/status") {
+    return Response.json(
+      { hasToken: config.auth.token !== null },
+      { headers: LOGIN_CORS_HEADERS },
+    );
   }
   if (request.method === "POST" && pathname === "/v1/chat/completions") {
     return handleChatCompletion(request, config);

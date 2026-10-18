@@ -20,6 +20,7 @@ as a personal convenience, not a supported API.
 - [Bun](https://bun.sh) 1.x (the only runtime; there are no npm dependencies)
 - `omp` 18.x
 - A free DeepSeek chat account that can sign in with Google
+- Chrome or another Chromium browser for the token-bridge extension
 
 ## Install
 
@@ -35,31 +36,40 @@ safe to run for consistency.
 
 ## Log in
 
-```bash
-bun run login --write-env
-```
+The login path is a small Chrome extension. It reads the token that the DeepSeek
+web app already stores in `localStorage.userToken` and posts it to the local
+proxy. There is no Google OAuth redirect, custom URL scheme, or CDP.
 
-The helper:
+1. Start the proxy:
 
-1. Reuses or creates a device id (stored in `~/.omp/agent/.deepseek-web-device-id`).
-2. Opens the DeepSeek Google authorize URL in your browser and prints it to stderr.
-3. Prompts for the final redirect URL. After approving Google sign-in, the browser
-   lands on a `com.deepseek.chat://authorized_android?nonce=...&code=...` URL.
-   Copy the whole URL from the address bar and paste it at the prompt.
-   If the browser blocks the custom scheme, copy the same request from the
-   DevTools Network tab.
-4. Exchanges the nonce through `/api/v0/users/oauth/get_token`.
-5. Writes `DEEPSEEK_WEB_TOKEN` and `DEEPSEEK_WEB_DEVICE_ID` to
-   `~/.omp/agent/.env` (mode `0600`), preserving unrelated lines.
+   ```bash
+   bun run start
+   ```
 
-`bun run login` on its own refuses to run: it requires `--print-token` **or**
-`--write-env` so the token is never printed by accident. Use
-`--print-token` only when a parent process should capture stdout. A non-interactive
-redirect can be supplied with `--redirect-url '<com.deepseek.chat://...>'`.
+2. Load the extension: open `chrome://extensions`, enable **Developer mode**,
+   click **Load unpacked**, and select the `extension/` directory.
 
-Tokens expire or rotate. If the proxy starts returning 401, run `bun run login
---write-env` again. The proxy also queries `auth_token/check_device` on auth errors
-and uses the rotated token when DeepSeek supplies one.
+3. Open <https://chat.deepseek.com> and sign in normally.
+
+4. The content script sends `localStorage.userToken` and
+   `deepseek-device-id:chat` to `http://127.0.0.1:8787/login/token` through the
+   extension's background worker. The proxy writes the token to
+   `~/.omp/agent/deepseek-web-token` with mode `0600`.
+
+5. Verify:
+
+   ```bash
+   curl -s http://127.0.0.1:8787/login/status
+   # {"hasToken":true}
+   ```
+
+The content script polls every 5 seconds and re-sends when the token changes, or
+every 30 seconds as a heartbeat. If the web app rotates the token, the proxy is
+updated automatically. If the token check fails, reload the extension or start
+the proxy again.
+
+The extension only sends the token to loopback and never logs it. The proxy never
+logs the token, prompt, or `Authorization` header.
 
 ## Start the proxy
 
@@ -67,26 +77,14 @@ and uses the rotated token when DeepSeek supplies one.
 bun run start
 ```
 
-It listens on `http://127.0.0.1:8787` only. The proxy reads the device id saved
-by `bun run login` from `~/.omp/agent/.deepseek-web-device-id`; to apply other
-settings from `~/.omp/agent/.env` (port, log level, token command), load that
-file first:
-
-```bash
-set -a; . ~/.omp/agent/.env; set +a
-bun run start
-```
-
-The token is not read from the environment by the proxy: omp sends it as
-`Authorization: Bearer <token>` on every chat request, and the proxy forwards it
-upstream. Do not open the port to the network.
+It listens on `http://127.0.0.1:8787` only. The proxy uses the stored token for
+DeepSeek; omp's `apiKey` is a dummy value. Do not open the port to the network.
 
 Quick check:
 
 ```bash
-set -a; . ~/.omp/agent/.env; set +a
-curl -s http://127.0.0.1:8787/v1/models \
-  -H "Authorization: Bearer $DEEPSEEK_WEB_TOKEN"
+curl -s http://127.0.0.1:8787/v1/models
+curl -s http://127.0.0.1:8787/login/status
 ```
 
 ## Configure omp
@@ -100,7 +98,7 @@ providers:
   deepseek-web:
     baseUrl: http://127.0.0.1:8787/v1
     api: openai-completions
-    apiKey: DEEPSEEK_WEB_TOKEN
+    apiKey: local
     authHeader: true
     models:
       - id: deepseek-web
@@ -119,13 +117,9 @@ providers:
 `models.example.yml` is not an active models file, so `omp models find deepseek-web`
 finds nothing until you copy the block into the active file.
 
-`bun run login --write-env` stores the token in `~/.omp/agent/.env`, which omp
-loads automatically, so `apiKey: DEEPSEEK_WEB_TOKEN` is the working form.
-
-The bundled login helper is interactive: it waits for a pasted redirect URL.
-omp runs `!` command-backed keys with a 10 s timeout and no stdin, so the
-commented `!bun run ... --print-token` line in `models.example.yml` is only a
-placeholder for a future non-interactive helper, not a working configuration.
+`apiKey: local` is a dummy credential so omp selects the provider. The proxy
+ignores it: when `~/.omp/agent/deepseek-web-token` exists, that token is used for
+DeepSeek.
 
 Verify:
 
@@ -143,18 +137,16 @@ tool, see limitations below.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DEEPSEEK_WEB_PORT` | `8787` | Proxy port |
-| `DEEPSEEK_WEB_TOKEN` | — | Web token; referenced by `models.yml`, not read by the proxy |
-| `DEEPSEEK_WEB_DEVICE_ID` | saved id, else UUID | Stable `x-device-id`; overrides the file written by `bun run login` |
+| `DEEPSEEK_WEB_BASE_URL` | `https://chat.deepseek.com` | Upstream web API base URL |
+| `DEEPSEEK_WEB_DEVICE_ID` | extension value | Stable `x-device-id`; usually written by the extension |
 | `DEEPSEEK_WEB_THINKING` | `0` | `1` enables DeepThink for requests without tools |
 | `DEEPSEEK_WEB_SEARCH` | `0` | `1` enables web search |
-| `DEEPSEEK_WEB_TOKEN_CMD` | — | Command whose stdout is a fresh token after a 401 |
 | `DEEPSEEK_WEB_MAX_PROMPT_CHARS` | `400000` | Prompt length cap |
 | `DEEPSEEK_WEB_LOG_LEVEL` | `info` | `debug` adds stream-error detail; prompts and tokens are never logged |
 
-When `DEEPSEEK_WEB_DEVICE_ID` is unset, the proxy reads
-`~/.omp/agent/.deepseek-web-device-id` (the file `bun run login` writes) and uses
-its trimmed content. A random UUID is generated only when that file is missing or
-empty.
+The token and device id are stored in `~/.omp/agent/deepseek-web-token` and
+`~/.omp/agent/.deepseek-web-device-id` with mode `0600`. The proxy reads them at
+startup and after every extension POST.
 
 ## Known limitations
 
@@ -169,23 +161,24 @@ empty.
 - **Unofficial protocol and ToS.** Automated use of free web chat may violate
   DeepSeek's terms or hit rate limits, and endpoints/PoW may change at any time.
   Use at your own risk and with your own account.
-- **Loopback only.** The proxy binds `127.0.0.1`. Every chat completion request
-  must carry a bearer token, but the proxy only validates it upstream; anyone who
-  can reach the port and holds the token can spend your account quota. Never
-  expose it through a tunnel or reverse proxy.
+- **Loopback only.** The proxy binds `127.0.0.1`. Every completion request must
+  carry a bearer token, but the proxy uses the stored token; anyone who can reach
+  the port can spend your account quota. Never expose it through a tunnel or
+  reverse proxy.
 - **No token logging.** Tokens are bearer credentials; the proxy never logs the
   `Authorization` header, prompt text, or token values, including at `debug` level.
-  Avoid `--print-token` in shared terminals and review logs before sharing them.
+- **Extension dependency.** The token is read from the web app's
+  `localStorage.userToken` key. If DeepSeek changes that key or the page storage
+  layout, update `extension/content.js`. The proxy stores one token; there is no
+  multi-account rotation.
 - **Streaming is buffered.** The proxy collects the full upstream response before
   emitting chunks; tokens do not appear incrementally. `stream: false` is also
   supported.
-- **Usage is not reported.** The proxy does not emit a `usage` object, so token
-  counts are whatever omp estimates locally. `contextWindow: 128000` is an
-  estimate.
-- **Single account.** On an auth error the proxy checks `auth_token/check_device`
-  and adopts a rotated token when DeepSeek supplies one, and
-  `DEEPSEEK_WEB_TOKEN_CMD` can fetch a fresh token, but there is no multi-account
-  rotation. An expired token otherwise requires `bun run login --write-env`.
+- **Usage is not reported.** The proxy emits no OpenAI `usage` object;
+  `contextWindow: 128000` is an estimate.
+- **Single account.** The proxy checks `auth_token/check_device` on auth errors and
+  adopts a rotated token when DeepSeek supplies one; the extension also re-posts
+  a token when the web app rotates it. There is no multi-account rotation.
 
 ## Vendored PoW solver
 

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TOKEN_PATH } from "./auth/token-store";
 import type { DeepSeekCompletionRequest } from "./deepseek/types";
 
 export const DEFAULT_PORT = 8787;
@@ -8,7 +9,7 @@ export const DEFAULT_HOSTNAME = "127.0.0.1";
 export const DEFAULT_BASE_URL = "https://chat.deepseek.com";
 export const DEFAULT_MAX_PROMPT_CHARS = 400000;
 
-/** Device id persisted by `scripts/login.ts`, reused when the env var is unset. */
+/** Device id stored by the browser extension, reused when the env var is unset. */
 export const DEFAULT_DEVICE_ID_PATH = join(
   homedir(),
   ".omp",
@@ -38,6 +39,10 @@ export interface ServerConfig {
   hostname?: string;
   baseUrl?: string;
   deviceId?: string;
+  /** File the browser extension's token is written to. */
+  tokenPath?: string;
+  /** File the browser extension's device id is written to. */
+  deviceIdPath?: string;
   maxPromptChars?: number;
   /** Default DeepThink setting for requests without tools. */
   thinking?: boolean;
@@ -99,25 +104,28 @@ function readLogLevel(value: string | undefined): LogLevel {
  * Reads the proxy configuration from environment variables.
  *
  * The proxy always binds to loopback. The device id comes from
- * `DEEPSEEK_WEB_DEVICE_ID`, then the file written by `bun run login`, then a
- * fresh UUID per process.
+ * `DEEPSEEK_WEB_DEVICE_ID`, then the file written by the browser extension, then
+ * a fresh UUID per process.
  */
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
-  options: { deviceIdPath?: string } = {},
+  options: { deviceIdPath?: string; tokenPath?: string } = {},
 ): ServerConfig {
   const tokenCommand = env.DEEPSEEK_WEB_TOKEN_CMD?.trim();
   const configuredDeviceId = env.DEEPSEEK_WEB_DEVICE_ID?.trim();
+  const deviceIdPath = options.deviceIdPath ?? DEFAULT_DEVICE_ID_PATH;
+  const tokenPath = options.tokenPath ?? DEFAULT_TOKEN_PATH;
   const deviceId =
     configuredDeviceId !== undefined && configuredDeviceId !== ""
       ? configuredDeviceId
-      : (readStoredDeviceId(options.deviceIdPath ?? DEFAULT_DEVICE_ID_PATH) ??
-        globalThis.crypto.randomUUID());
+      : (readStoredDeviceId(deviceIdPath) ?? globalThis.crypto.randomUUID());
   return {
     port: readInteger(env.DEEPSEEK_WEB_PORT, DEFAULT_PORT),
     hostname: DEFAULT_HOSTNAME,
     baseUrl: env.DEEPSEEK_WEB_BASE_URL ?? DEFAULT_BASE_URL,
     deviceId,
+    tokenPath,
+    deviceIdPath,
     maxPromptChars: readPositiveInteger(
       env.DEEPSEEK_WEB_MAX_PROMPT_CHARS,
       DEFAULT_MAX_PROMPT_CHARS,

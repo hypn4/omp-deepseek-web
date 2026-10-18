@@ -438,7 +438,7 @@ describe("POST /v1/chat/completions", () => {
 
     expect(response.status).toBe(401);
     const json: ErrorJson = await response.json();
-    expect(json.error.message).toContain("bun run login");
+    expect(json.error.message).toContain("DeepSeek Token Bridge extension");
     expect(state.created).toBe(0);
   });
 
