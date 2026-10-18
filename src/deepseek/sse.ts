@@ -7,6 +7,8 @@ export interface DeepSeekSseResult {
   text: string;
   thinking: string;
   finished: boolean;
+  /** Upstream response message id, when the ready event supplied one. */
+  messageId?: number;
   /** Current web-search phase reported by the web API, when present. */
   searchStatus?: string;
 }
@@ -149,10 +151,17 @@ export class DeepSeekSseParser {
       searchStatus = text.length > 0 ? "composing" : "searching";
     }
 
+    const rawMessageId = this.#get("response_message_id");
+    const messageId =
+      typeof rawMessageId === "number" && Number.isFinite(rawMessageId)
+        ? rawMessageId
+        : undefined;
+
     return {
       text: text.join(""),
       thinking: thinking.join(""),
       finished: this.#finished,
+      ...(messageId === undefined ? {} : { messageId }),
       ...(searchStatus === undefined ? {} : { searchStatus }),
     };
   }
@@ -204,6 +213,12 @@ export class DeepSeekSseParser {
     const rawPath = typeof patch.p === "string" ? patch.p : "";
     const op = typeof patch.o === "string" ? patch.o : "";
     const value = patch.v;
+
+    if (rawPath === "" && op === "" && !("v" in patch)) {
+      // Named events such as `ready` carry a plain object, not a patch.
+      this.#applyUnpathed(patch);
+      return;
+    }
 
     if (rawPath === "") {
       this.#applyUnpathed(value);

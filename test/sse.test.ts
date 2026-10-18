@@ -31,6 +31,7 @@ describe("DeepSeekSseParser", () => {
       text: "OK",
       thinking: "",
       finished: true,
+      messageId: 2,
     });
   });
 

@@ -34,7 +34,18 @@ class FakeSink implements EventSink {
   }
 }
 
-function sseBody(text: string, thinking = ""): ReadableStream<Uint8Array> {
+interface ScriptedResponse {
+  text: string;
+  thinking?: string;
+  messageId?: number;
+  finished?: boolean;
+}
+
+function sseBody(
+  text: string,
+  thinking = "",
+  options: { messageId?: number; finished?: boolean } = {},
+): ReadableStream<Uint8Array> {
   const fragments: Array<{ type: "THINK" | "RESPONSE"; content: string }> = [];
   if (thinking.length > 0) {
     fragments.push({ type: "THINK", content: thinking });
@@ -42,7 +53,16 @@ function sseBody(text: string, thinking = ""): ReadableStream<Uint8Array> {
   if (text.length > 0) {
     fragments.push({ type: "RESPONSE", content: text });
   }
-  const body = `data: ${JSON.stringify({ v: { response: { fragments } } })}\n\ndata: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n`;
+  const ready =
+    options.messageId === undefined
+      ? ""
+      : `event: ready\ndata: ${JSON.stringify({ response_message_id: options.messageId })}\n\n`;
+  const body =
+    ready +
+    `data: ${JSON.stringify({ v: { response: { fragments } } })}\n\n` +
+    (options.finished === false
+      ? ""
+      : 'data: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n');
   return new Response(body).body!;
 }
 
@@ -64,6 +84,7 @@ interface FakeClient {
 function providerDeps(options: {
   text?: string;
   thinking?: string;
+  responses?: ScriptedResponse[];
   token?: string | null;
   completeError?: Error;
   onDelete?: (sessionId: string) => void;
@@ -72,6 +93,7 @@ function providerDeps(options: {
   onWait?: (id: string) => void;
 }): ProviderDeps {
   let uploadCount = 0;
+  const responses = options.responses === undefined ? undefined : [...options.responses];
   const client: FakeClient = {
     async createSession() {
       return "session-1";
@@ -80,6 +102,13 @@ function providerDeps(options: {
       options.onComplete?.(request);
       if (options.completeError) {
         throw options.completeError;
+      }
+      if (responses !== undefined) {
+        const scripted = responses.shift();
+        if (scripted === undefined) {
+          throw new Error("unexpected extra completion request");
+        }
+        return sseBody(scripted.text, scripted.thinking ?? "", scripted);
       }
       return sseBody(options.text ?? "", options.thinking ?? "");
     },
@@ -126,6 +155,112 @@ describe("DeepSeek omp provider", () => {
     expect(sink.ended?.content).toEqual([{ type: "text", text: "hello" }]);
     expect(sink.ended?.stopReason).toBe("stop");
     expect(deleted).toEqual(["session-1"]);
+  });
+
+  test("continues a truncated answer in the same session", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          { text: "The answer is incomplete but", messageId: 2, finished: false },
+          { text: " it finishes here.", messageId: 4 },
+        ],
+        onComplete: (value) => requests.push(value),
+      }),
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({
+      chatSessionId: "session-1",
+      parentMessageId: 2,
+      thinkingEnabled: false,
+      searchEnabled: false,
+    });
+    expect(sink.failure).toBeUndefined();
+    expect(sink.ended?.content).toEqual([
+      { type: "text", text: "The answer is incomplete but it finishes here." },
+    ]);
+    const streamed = sink.events
+      .filter((event) => event.type === "text_delta")
+      .map((event) => (event.type === "text_delta" ? event.delta : ""))
+      .join("");
+    expect(streamed).toBe("The answer is incomplete but it finishes here.");
+    expect(sink.ended?.stopReason).toBe("stop");
+  });
+
+  test("streams a long continuation exactly once", async () => {
+    const first = "x".repeat(120) + " but";
+    const second = " finished.";
+    const sink = await run(
+      providerDeps({
+        responses: [
+          { text: first, messageId: 2 },
+          { text: second, messageId: 4 },
+        ],
+      }),
+    );
+
+    const streamed = sink.events
+      .filter((event) => event.type === "text_delta")
+      .map((event) => (event.type === "text_delta" ? event.delta : ""))
+      .join("");
+    expect(streamed).toBe(first + second);
+  });
+
+  test("accepts a completion marker without changing the answer", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          { text: "The answer is incomplete but", messageId: 2 },
+          { text: "[COMPLETE]", messageId: 4 },
+        ],
+        onComplete: (value) => requests.push(value),
+      }),
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(sink.ended?.content).toEqual([
+      { type: "text", text: "The answer is incomplete but" },
+    ]);
+    expect(sink.ended?.stopReason).toBe("stop");
+  });
+
+  test("caps continuation attempts and marks the answer as length-limited", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          { text: "part one but", messageId: 2 },
+          { text: " part two but", messageId: 4 },
+          { text: " part three but", messageId: 6 },
+        ],
+        onComplete: (value) => requests.push(value),
+      }),
+    );
+
+    expect(requests).toHaveLength(3);
+    expect(sink.ended?.content).toEqual([
+      { type: "text", text: "part one but part two but part three but" },
+    ]);
+    expect(sink.ended?.stopReason).toBe("length");
+  });
+
+  test("includes the answer tail when no parent message id is available", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    await run(
+      providerDeps({
+        responses: [
+          { text: "The answer is incomplete but", finished: false },
+          { text: " it finishes here.", messageId: 4 },
+        ],
+        onComplete: (value) => requests.push(value),
+      }),
+    );
+
+    expect(requests[1]?.parentMessageId).toBeNull();
+    expect(requests[1]?.prompt).toContain("The answer is incomplete but");
+    expect(requests[1]?.prompt).toContain("Continue");
   });
 
   test("defaults thinking and search on", async () => {

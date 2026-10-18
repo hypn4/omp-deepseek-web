@@ -15,6 +15,8 @@ export interface CompletionResult {
   text: string;
   thinking: string;
   toolCalls: ParsedToolCall[];
+  /** "length" warns the host that the answer may still be truncated. */
+  stopReason?: "stop" | "length";
 }
 
 export interface EventSink {
@@ -326,7 +328,8 @@ export class StreamingCompletion {
       });
     }
 
-    const reason = result.toolCalls.length > 0 ? "toolUse" : "stop";
+    const reason =
+      result.toolCalls.length > 0 ? "toolUse" : (result.stopReason ?? "stop");
     this.#partial.stopReason = reason;
     this.#stream.push({ type: "done", reason, message: this.#partial });
     this.#stream.end(this.#partial);

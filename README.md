@@ -19,6 +19,8 @@ repository and plugin package name changed.
 - `deepseek-web/deepseek-web` model in omp
 - Incremental thinking/text streaming, with web-search progress in the omp status
   line (`searching…`, `composing…`)
+- Automatic continuation when an answer is cut off mid-thought, using the same
+  DeepSeek chat session (at most two follow-up requests)
 - Text and image input (PNG, JPEG, WebP, GIF)
 - omp tools (`read`, `edit`, `write`, `bash`, …) through a text tool-call bridge
 - Chrome native-messaging token bridge with owner-only token files
@@ -206,6 +208,10 @@ bun extension/install.ts --uninstall
 - **Streaming tool calls.** Thinking and answer text stream incrementally, but
   tool calls are emitted after the response completes because the text protocol
   must be parsed as a whole.
+- **Truncation recovery is heuristic.** The web API does not expose a reliable
+  finish reason. A response that ends in an unfinished sentence is continued
+  automatically; after two attempts the provider reports a length stop instead
+  of pretending the partial answer is complete.
 - **Text tool bridge.** DeepSeek web has no native tool calling. Tool calls are
   parsed from a prompted format and can break if the model or hidden system
   prompt changes.

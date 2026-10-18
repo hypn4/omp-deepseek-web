@@ -1,5 +1,12 @@
 import { TokenError } from "../src/deepseek/client";
+import {
+  buildContinuationPrompt,
+  isContinuationComplete,
+  isLikelyIncomplete,
+  mergeContinuation,
+} from "../src/deepseek/continuation";
 import type { DeepSeekCompletionRequest } from "../src/deepseek/types";
+import type { DeepSeekSseResult } from "../src/deepseek/sse";
 import { stripToolMarkup } from "../src/openai/translate";
 import { parseToolCalls } from "../src/tools/parser";
 import { collectCompletion } from "./collect";
@@ -67,6 +74,9 @@ function searchStatusLabel(status: string): string {
   }
   return `DeepSeek Web: ${normalized}`;
 }
+
+/** One initial completion plus at most two continuation requests. */
+const MAX_CONTINUATIONS = 2;
 
 export interface ProviderTurnOptions {
   signal?: AbortSignal;
@@ -158,7 +168,7 @@ export async function runDeepSeekTurn(
     let lastText = "";
     let lastThinking = "";
     let lastSearchStatus: string | undefined;
-    const result = await collectCompletion(upstream, signal, (snapshot) => {
+    const onProgress = (snapshot: DeepSeekSseResult): void => {
       if (snapshot.thinking !== lastThinking) {
         const delta = snapshot.thinking.startsWith(lastThinking)
           ? snapshot.thinking.slice(lastThinking.length)
@@ -184,7 +194,87 @@ export async function runDeepSeekTurn(
         lastSearchStatus = snapshot.searchStatus;
         deps.onStatus?.(searchStatusLabel(snapshot.searchStatus));
       }
-    });
+    };
+
+    const result = await collectCompletion(upstream, signal, onProgress);
+
+    if (signal.aborted) {
+      emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
+      return;
+    }
+
+    let text = result.text;
+    let thinking = result.thinking;
+    let finished = result.finished;
+    let messageId = result.messageId;
+    let continuations = 0;
+    let lengthLimited = false;
+
+    while (true) {
+      const toolCalls =
+        (context.tools?.length ?? 0) > 0 ? parseToolCalls(text) : [];
+      if (toolCalls.length > 0) {
+        break;
+      }
+      if (!isLikelyIncomplete({ text, finished })) {
+        break;
+      }
+      if (continuations >= MAX_CONTINUATIONS) {
+        lengthLimited = true;
+        break;
+      }
+
+      continuations += 1;
+      deps.onStatus?.("DeepSeek Web: continuing…");
+      const continuationPrompt = buildContinuationPrompt(
+        messageId === undefined ? text : undefined,
+      );
+      let continuation;
+      try {
+        const continuationStream = await client.complete(
+          {
+            chatSessionId: sessionId,
+            parentMessageId: messageId ?? null,
+            prompt: continuationPrompt,
+            refFileIds: [],
+            thinkingEnabled: false,
+            searchEnabled: false,
+          },
+          signal,
+        );
+        // The continuation is buffered and merged below; streaming it here
+        // would duplicate any overlapping text after the merge.
+        continuation = await collectCompletion(continuationStream, signal);
+      } catch (error) {
+        if (signal.aborted) {
+          throw error;
+        }
+        deps.onStatus?.("DeepSeek Web: continuation failed");
+        lengthLimited = true;
+        break;
+      }
+
+      const previousText = text;
+      const addition = continuation.text;
+      const merged = mergeContinuation(previousText, addition);
+      if (merged.startsWith(previousText) && merged.length > previousText.length) {
+        emitter.textDelta(merged.slice(previousText.length));
+      }
+      text = merged;
+      thinking += continuation.thinking;
+      finished = continuation.finished;
+      messageId = continuation.messageId;
+
+      if (isContinuationComplete(addition)) {
+        break;
+      }
+      if (merged === previousText) {
+        if (isLikelyIncomplete({ text, finished })) {
+          lengthLimited = true;
+        }
+        break;
+      }
+    }
 
     if (signal.aborted) {
       emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
@@ -192,15 +282,18 @@ export async function runDeepSeekTurn(
     }
 
     const toolCalls =
-      (context.tools?.length ?? 0) > 0 ? parseToolCalls(result.text) : [];
-    const text =
-      toolCalls.length > 0 ? stripToolMarkup(result.text) : result.text;
+      (context.tools?.length ?? 0) > 0 ? parseToolCalls(text) : [];
+    const finalText =
+      toolCalls.length > 0 ? stripToolMarkup(text) : text;
     emitter.finish({
-      text,
-      thinking: result.thinking,
+      text: finalText,
+      thinking,
       toolCalls,
+      ...(lengthLimited ? { stopReason: "length" as const } : {}),
     });
-    deps.onStatus?.("DeepSeek Web ✓");
+    deps.onStatus?.(
+      lengthLimited ? "DeepSeek Web: truncated" : "DeepSeek Web ✓",
+    );
   } catch (error) {
     const failure = signal.aborted ? (signal.reason ?? error) : tokenError(error);
     emitter.fail(failure);
