@@ -120,6 +120,19 @@ describe("parseToolCalls", () => {
     expect(calls[0]?.arguments).toBe('{"path":"/tmp/y"}');
   });
 
+  test("drops a truncated V3.1 block that only contains the function segment", () => {
+    const text = [
+      v31("tool_calls_begin"),
+      v31("tool_call_begin"),
+      "function",
+      v31("tool_sep"),
+      v31("tool_call_end"),
+      v31("tool_calls_end"),
+    ].join("");
+
+    expect(parseToolCalls(text)).toEqual([]);
+  });
+
   test("parses multiple invokes in one DSML wrapper with distinct ids", () => {
     const text = [
       dsmlOpen("tool_calls"),

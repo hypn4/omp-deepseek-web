@@ -214,9 +214,10 @@ function parseV31Call(body: string): ParsedToolCall | null {
     .filter((part) => part.length > 0);
 
   // Canonical V3.1 emits a literal `function` type segment before the first
-  // separator. It carries no data, so drop it before locating the tool name.
+  // separator. It carries no data, so drop it before locating the tool name;
+  // a truncated block that contains only that segment is not a call.
   if (
-    parts.length > 1 &&
+    parts.length > 0 &&
     new RegExp(`^function(?:${WORD_BOUNDARY}|_|\\s)*$`).test(parts[0]!)
   ) {
     parts.shift();
