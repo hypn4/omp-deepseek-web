@@ -2,6 +2,18 @@
 // The host writes owner-only files; the token is never logged.
 const NATIVE_HOST = "com.whales.deepseek_web";
 const STATUS_KEY = "deepseekWebStatus";
+const COLOR_ICONS = {
+  16: "icons/deepseek-web-16.png",
+  32: "icons/deepseek-web-32.png",
+  48: "icons/deepseek-web-48.png",
+  128: "icons/deepseek-web-128.png",
+};
+const MONO_ICONS = {
+  16: "icons/deepseek-web-mono-16.png",
+  32: "icons/deepseek-web-mono-32.png",
+  48: "icons/deepseek-web-mono-48.png",
+  128: "icons/deepseek-web-mono-128.png",
+};
 
 function publishStatus(status) {
   const value = { ...status, updatedAt: Date.now() };
@@ -26,6 +38,12 @@ function publishStatus(status) {
   try {
     chrome.action.setBadgeText({ text: badge });
     chrome.action.setBadgeBackgroundColor({ color });
+    chrome.action.setIcon({
+      path:
+        status.state === "connected" || status.state === "syncing"
+          ? COLOR_ICONS
+          : MONO_ICONS,
+    });
     chrome.action.setTitle({
       title: `DeepSeek Token Bridge — ${status.message}`,
     });

@@ -3,6 +3,7 @@ const STATUS_KEY = "deepseekWebStatus";
 const CHAT_URL = "https://chat.deepseek.com/";
 
 const stateDot = document.getElementById("state-dot");
+const brandIcon = document.getElementById("brand-icon");
 const message = document.getElementById("message");
 const lastSync = document.getElementById("last-sync");
 const device = document.getElementById("device");
@@ -23,6 +24,10 @@ function render(status) {
   const state = status?.state ?? "idle";
   stateDot.className = `dot ${state}`;
   stateDot.title = status?.message ?? "No sync yet";
+  brandIcon.src =
+    state === "missing" || state === "error"
+      ? "icons/deepseek-web-mono-48.png"
+      : "icons/deepseek-web-48.png";
   message.textContent =
     status?.message ?? "No sync yet. Open chat.deepseek.com and sign in.";
   lastSync.textContent = formatTime(status?.lastSync ?? status?.updatedAt);

@@ -45,9 +45,19 @@ The toolbar badge shows the last sync result:
 - `…` — a sync is in progress.
 - `!` — no token was found, or the native host reported an error.
 
-Click the extension icon to open the popup. It shows the last sync time, whether
-a device id is stored, the native host name, and a **Sync now** button. The popup
-never displays the token value.
+The toolbar icon is the color whale while connected/syncing and the grayscale
+whale when the token is missing or the host errors. Click the extension icon to
+open the popup. It shows the last sync time, whether a device id is stored, the
+native host name, and a **Sync now** button. The popup never displays the token
+value.
+
+## Icons
+
+- `icons/deepseek-web-{16,32,48,128}.png` — color DeepSeek whale with Pi badge.
+- `icons/deepseek-web-mono-{16,32,48,128}.png` — grayscale variant for the
+  missing-token/error state.
+- Source assets: `assets/deepseek-whale-pi-color.png` and
+  `assets/deepseek-whale-pi-mono.png`.
 
 ## Permissions
 

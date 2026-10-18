@@ -33,6 +33,7 @@ interface ChromeMock {
     setBadgeText(value: { text: string }): void;
     setBadgeBackgroundColor(value: { color: string }): void;
     setTitle(value: { title: string }): void;
+    setIcon(value: { path: Record<string, string> }): void;
   };
 }
 
@@ -45,6 +46,7 @@ interface BackgroundMock {
   statusWrites: Array<Record<string, unknown>>;
   badgeTexts: string[];
   badgeColors: string[];
+  iconPaths: Array<Record<string, string>>;
 }
 
 function loadBackground(): BackgroundMock {
@@ -54,6 +56,7 @@ function loadBackground(): BackgroundMock {
   const statusWrites: Array<Record<string, unknown>> = [];
   const badgeTexts: string[] = [];
   const badgeColors: string[] = [];
+  const iconPaths: Array<Record<string, string>> = [];
   let messageListener: ((value: unknown) => void) | undefined;
   let disconnectListener: (() => void) | undefined;
 
@@ -108,6 +111,9 @@ function loadBackground(): BackgroundMock {
         badgeColors.push(value.color);
       },
       setTitle() {},
+      setIcon(value) {
+        iconPaths.push(value.path);
+      },
     },
   };
 
@@ -131,6 +137,7 @@ function loadBackground(): BackgroundMock {
     statusWrites,
     badgeTexts,
     badgeColors,
+    iconPaths,
   };
 }
 
@@ -190,6 +197,7 @@ describe("extension background", () => {
     expect(status?.deviceIdPresent).toBe(true);
     expect(mock.badgeTexts.at(-1)).toBe("✓");
     expect(mock.badgeColors.at(-1)).toBe("#188038");
+    expect(mock.iconPaths.at(-1)?.["128"]).toContain("deepseek-web-128.png");
   });
 
   test("publishes a missing-token status and warning badge", () => {
@@ -207,6 +215,9 @@ describe("extension background", () => {
     expect(status?.state).toBe("missing");
     expect(status?.message).toContain("No token");
     expect(mock.badgeTexts.at(-1)).toBe("!");
+    expect(mock.iconPaths.at(-1)?.["128"]).toContain(
+      "deepseek-web-mono-128.png",
+    );
   });
 
   test("reports a native host disconnect", () => {
