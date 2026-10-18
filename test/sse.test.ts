@@ -73,4 +73,42 @@ describe("DeepSeekSseParser", () => {
       finished: true,
     });
   });
+
+  test("ignores prototype-polluting path segments", () => {
+    const parser = new DeepSeekSseParser();
+    try {
+      parser.feed(
+        [
+          'data: {"p":"__proto__/polluted","o":"SET","v":"yes"}',
+          'data: {"p":"constructor/prototype/polluted","o":"SET","v":"yes"}',
+          'data: {"p":"response/__proto__/polluted","o":"SET","v":"yes"}',
+          'data: {"p":"response","o":"SET","v":{"status":"FINISHED","fragments":[{"type":"RESPONSE","content":"safe"}]}}',
+          "",
+        ].join("\n"),
+      );
+
+      expect(parser.result()).toEqual({
+        text: "safe",
+        thinking: "",
+        finished: true,
+      });
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty("polluted")).toBe(false);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).polluted;
+    }
+  });
+
+  test("ignores an unpathed __proto__ key", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      'data: {"v":{"__proto__":{"response":{"status":"FINISHED","fragments":[{"type":"RESPONSE","content":"evil"}]}}}}\n\n',
+    );
+
+    expect(parser.result()).toEqual({
+      text: "",
+      thinking: "",
+      finished: false,
+    });
+  });
 });

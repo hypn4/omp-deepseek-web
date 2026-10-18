@@ -209,6 +209,77 @@ describe("DeepSeekClient", () => {
     expect(error).toBeInstanceOf(TokenError);
   });
 
+  test("maps a 200 JSON error envelope with 40003 to TokenError", async () => {
+    installFetch(
+      jsonResponse(envelope({ challenge: POW_CHALLENGE })),
+      jsonResponse({
+        code: 0,
+        msg: "",
+        data: { biz_code: 40003, biz_msg: "INVALID_TOKEN" },
+      }),
+      jsonResponse(envelope({ rotate: null, data: null })),
+    );
+
+    const error = await capture(
+      makeClient().complete({ chatSessionId: "session-1", prompt: "hello" }),
+    );
+    expect(error).toBeInstanceOf(TokenError);
+  });
+
+  test("maps a 200 JSON error envelope with 50006 to DeepSeekApiError", async () => {
+    installFetch(
+      jsonResponse(envelope({ challenge: POW_CHALLENGE })),
+      jsonResponse({
+        code: 0,
+        msg: "",
+        data: { biz_code: 50006, biz_msg: "MUTED" },
+      }),
+    );
+
+    const error = await capture(
+      makeClient().complete({ chatSessionId: "session-1", prompt: "hello" }),
+    );
+    expect(error).toBeInstanceOf(DeepSeekApiError);
+    expect((error as DeepSeekApiError).code).toBe(50006);
+  });
+
+  test("retries a 200 JSON Pow envelope once and surfaces PowError", async () => {
+    for (const code of [40301, 40300]) {
+      const failure = (): Response =>
+        jsonResponse({
+          code: 0,
+          msg: "",
+          data: { biz_code: code, biz_msg: "POW" },
+        });
+      installFetch(
+        jsonResponse(envelope({ challenge: POW_CHALLENGE })),
+        failure(),
+        jsonResponse(envelope({ challenge: POW_CHALLENGE })),
+        failure(),
+      );
+
+      const error = await capture(
+        makeClient().complete({ chatSessionId: "session-1", prompt: "hello" }),
+      );
+      expect(error).toBeInstanceOf(PowError);
+    }
+  });
+
+  test("rejects a non-stream 200 response as an upstream error", async () => {
+    installFetch(
+      jsonResponse(envelope({ challenge: POW_CHALLENGE })),
+      new Response("<html>login</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    const error = await capture(
+      makeClient().complete({ chatSessionId: "session-1", prompt: "hello" }),
+    );
+    expect(error).toBeInstanceOf(DeepSeekApiError);
+  });
+
   test("maps 40301 and 40300 to PowError", async () => {
     for (const code of [40301, 40300]) {
       const failure = () =>

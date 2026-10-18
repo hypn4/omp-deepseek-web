@@ -34,9 +34,21 @@ function completionStream(text: string, thinking?: string): ReadableStream<Uint8
     `data: ${JSON.stringify({ v: { response: { fragments } } })}\n\n`,
     'data: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n',
   ];
-  return new Response(payloads.join(""), {
+  return rawStream(payloads.join(""));
+}
+
+function rawStream(payload: string): ReadableStream<Uint8Array> {
+  return new Response(payload, {
     headers: { "content-type": "text/event-stream" },
   }).body!;
+}
+
+function emptyStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
 }
 
 interface FakeState {
@@ -56,7 +68,7 @@ interface CompletionJson {
   model: string;
   choices: Array<{
     index: number;
-    message: { role: string; content: string | null };
+    message: { role: string; content: string | null; tool_calls?: unknown[] };
     finish_reason: string;
   }>;
 }
@@ -74,6 +86,7 @@ function createFake(options: {
   text?: string;
   thinking?: string;
   deleteError?: Error;
+  stream?: ReadableStream<Uint8Array>;
 }): Fake {
   const state: FakeState = {
     tokens: [],
@@ -95,7 +108,7 @@ function createFake(options: {
     },
     async complete(request: DeepSeekCompletionRequest) {
       state.requests.push(request);
-      return completionStream(options.text ?? "", options.thinking);
+      return options.stream ?? completionStream(options.text ?? "", options.thinking);
     },
   };
 
@@ -326,6 +339,69 @@ describe("POST /v1/chat/completions", () => {
       .filter((reason) => reason !== null);
     expect(finishes).toEqual(["tool_calls"]);
     expect(state.deleted).toEqual(["session-1"]);
+  });
+
+  test("returns DSML text as plain content and stop when tools is empty", async () => {
+    const markup = `I will read it.\n${dsmlReadCall("/tmp/x")}`;
+    const fake = createFake({ text: markup });
+    const { baseUrl } = start(fake);
+
+    const response = await postCompletion(baseUrl, {
+      messages: [{ role: "user", content: "read /tmp/x" }],
+      stream: false,
+      tools: [],
+    });
+
+    expect(response.status).toBe(200);
+    const json: CompletionJson = await response.json();
+    expect(json.choices[0]?.finish_reason).toBe("stop");
+    expect(json.choices[0]?.message.content).toBe(markup);
+    expect(json.choices[0]?.message.tool_calls).toBeUndefined();
+  });
+
+  test("returns 502 when the upstream stream is empty", async () => {
+    const fake = createFake({ stream: emptyStream() });
+    const { baseUrl, state } = start(fake);
+
+    const response = await postCompletion(baseUrl, {
+      messages: [{ role: "user", content: "hello" }],
+      stream: false,
+    });
+
+    expect(response.status).toBe(502);
+    const json: ErrorJson = await response.json();
+    expect(json.error.code).toBe("deepseek_error");
+    expect(state.deleted).toEqual(["session-1"]);
+  });
+
+  test("returns 502 when the upstream stream contains only malformed JSON", async () => {
+    const fake = createFake({ stream: rawStream("data: {not-json}\n\n") });
+    const { baseUrl, state } = start(fake);
+
+    const response = await postCompletion(baseUrl, {
+      messages: [{ role: "user", content: "hello" }],
+      stream: false,
+    });
+
+    expect(response.status).toBe(502);
+    const json: ErrorJson = await response.json();
+    expect(json.error.code).toBe("deepseek_error");
+    expect(state.deleted).toEqual(["session-1"]);
+  });
+
+  test("returns partial text when the stream ends before FINISHED", async () => {
+    const fake = createFake({ stream: rawStream('data: {"v":"partial"}\n\n') });
+    const { baseUrl } = start(fake);
+
+    const response = await postCompletion(baseUrl, {
+      messages: [{ role: "user", content: "hello" }],
+      stream: false,
+    });
+
+    expect(response.status).toBe(200);
+    const json: CompletionJson = await response.json();
+    expect(json.choices[0]?.message.content).toBe("partial");
+    expect(json.choices[0]?.finish_reason).toBe("stop");
   });
 
   test("returns 413 when the prompt exceeds DEEPSEEK_WEB_MAX_PROMPT_CHARS", async () => {

@@ -124,9 +124,35 @@ async function promptRedirectUrl(): Promise<string> {
   }
 }
 
+/**
+ * Returns the platform command that opens `url` in the default browser, or
+ * null when the platform is unknown. Windows `start` is a cmd builtin, and its
+ * empty title argument keeps the URL from being treated as the window title.
+ */
+export function browserOpenCommand(
+  url: string,
+  platform: string = process.platform,
+): string[] | null {
+  switch (platform) {
+    case "darwin":
+      return ["open", url];
+    case "linux":
+      return ["xdg-open", url];
+    case "win32":
+      return ["cmd", "/c", "start", "", url];
+    default:
+      return null;
+  }
+}
+
 function openInBrowser(url: string): void {
+  const command = browserOpenCommand(url);
+  if (command === null) {
+    console.error("Could not detect a browser opener; open the URL above.");
+    return;
+  }
   try {
-    Bun.spawn(["open", url], {
+    Bun.spawn(command, {
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",

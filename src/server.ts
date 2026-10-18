@@ -298,7 +298,15 @@ async function collectCompletion(
       parser.feed(decoder.decode(value, { stream: true }));
     }
     parser.feed(decoder.decode());
-    return parser.result();
+    const result = parser.result();
+    if (!result.finished && result.text === "" && result.thinking === "") {
+      throw new DeepSeekApiError(
+        -1,
+        "DeepSeek closed the completion stream before producing a response",
+        502,
+      );
+    }
+    return result;
   } catch (error) {
     const partial = parser.result();
     if (signal.aborted) {
@@ -457,7 +465,7 @@ async function handleChatCompletion(
       request.signal,
       config.logLevel,
     );
-    const toolCalls = parseToolCalls(result.text);
+    const toolCalls = tools.length > 0 ? parseToolCalls(result.text) : [];
     const content =
       toolCalls.length > 0 ? stripToolMarkup(result.text) : result.text;
     return completionResponse(

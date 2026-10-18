@@ -11,6 +11,26 @@ export interface DeepSeekSseResult {
 
 type JsonRecord = Record<string, unknown>;
 
+/**
+ * Path segments that would traverse or mutate object prototypes. Patch paths
+ * are untrusted stream input, so these are rejected wholesale.
+ */
+const UNSAFE_SEGMENTS: Record<string, true> = {
+  ["__proto__"]: true,
+  prototype: true,
+  constructor: true,
+};
+
+function safeSegments(path: string): string[] | null {
+  const segments = path.split("/");
+  for (const segment of segments) {
+    if (UNSAFE_SEGMENTS[segment] === true) {
+      return null;
+    }
+  }
+  return segments;
+}
+
 function readSegment(container: unknown, segment: string): unknown {
   if (Array.isArray(container)) {
     const index = segment === "-1" ? container.length - 1 : Number(segment);
@@ -60,7 +80,7 @@ function writeSegment(container: unknown, segment: string, value: unknown): void
 export class DeepSeekSseParser {
   #buffer = "";
   #finished = false;
-  #state: JsonRecord = { response: {} };
+  #state: JsonRecord = Object.create(null) as JsonRecord;
 
   feed(text: string): void {
     this.#buffer += text;
@@ -198,6 +218,9 @@ export class DeepSeekSseParser {
     }
 
     for (const [key, entry] of Object.entries(value as JsonRecord)) {
+      if (UNSAFE_SEGMENTS[key] === true) {
+        continue;
+      }
       this.#state[key] = entry;
     }
   }
@@ -274,9 +297,14 @@ export class DeepSeekSseParser {
   }
 
   #get(path: string): unknown {
+    const segments = safeSegments(path);
+    if (segments === null) {
+      return undefined;
+    }
+
     let current: unknown = this.#state;
 
-    for (const segment of path.split("/")) {
+    for (const segment of segments) {
       current = readSegment(current, segment);
       if (current === undefined) {
         return undefined;
@@ -287,7 +315,11 @@ export class DeepSeekSseParser {
   }
 
   #setAtPath(path: string, value: unknown): void {
-    const segments = path.split("/");
+    const segments = safeSegments(path);
+    if (segments === null) {
+      return;
+    }
+
     const last = segments.pop();
     if (last === undefined) {
       return;
@@ -301,7 +333,9 @@ export class DeepSeekSseParser {
       if (next === undefined || next === null) {
         const following = segments[index + 1];
         const child: unknown =
-          following === "-1" || (following !== undefined && /^\d+$/.test(following)) ? [] : {};
+          following === "-1" || (following !== undefined && /^\d+$/.test(following))
+            ? []
+            : Object.create(null);
         writeSegment(parent, segment, child);
         next = child;
       }

@@ -144,7 +144,10 @@ export class DeepSeekClient {
   }
 
   /** Reads an error body and always throws the mapped error. */
-  async #throwResponseError(response: Response): Promise<never> {
+  async #throwResponseError(
+    response: Response,
+    fallback = `DeepSeek completion failed (HTTP ${response.status})`,
+  ): Promise<never> {
     const text = await response.text();
     let payload: DeepSeekEnvelope<unknown> | undefined;
     try {
@@ -159,11 +162,7 @@ export class DeepSeekClient {
     if (response.status === 401) {
       throw new TokenError();
     }
-    throw new DeepSeekApiError(
-      -1,
-      `DeepSeek completion failed (HTTP ${response.status})`,
-      response.status,
-    );
+    throw new DeepSeekApiError(-1, fallback, response.status);
   }
 
   /**
@@ -331,6 +330,13 @@ export class DeepSeekClient {
 
     if (!response.ok) {
       await this.#throwResponseError(response);
+    }
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("text/event-stream")) {
+      await this.#throwResponseError(
+        response,
+        `DeepSeek returned a non-stream completion response (HTTP ${response.status})`,
+      );
     }
     if (response.body === null) {
       throw new DeepSeekApiError(

@@ -16,7 +16,7 @@ import {
   exchangeNonce,
   parseOAuthRedirect,
 } from "../src/login/oauth";
-import { parseArgs, writeEnvConfig } from "../scripts/login";
+import { browserOpenCommand, parseArgs, writeEnvConfig } from "../scripts/login";
 
 interface FetchCall {
   url: string;
@@ -229,6 +229,25 @@ describe("login CLI helpers", () => {
     expect(capture(() => parseArgs(["--redirect-url"]))).toBeInstanceOf(
       LoginError,
     );
+  });
+
+  test("builds a platform-specific browser open command", () => {
+    expect(browserOpenCommand("https://example.com", "darwin")).toEqual([
+      "open",
+      "https://example.com",
+    ]);
+    expect(browserOpenCommand("https://example.com", "linux")).toEqual([
+      "xdg-open",
+      "https://example.com",
+    ]);
+    expect(browserOpenCommand("https://example.com", "win32")).toEqual([
+      "cmd",
+      "/c",
+      "start",
+      "",
+      "https://example.com",
+    ]);
+    expect(browserOpenCommand("https://example.com", "freebsd")).toBeNull();
   });
 
   test("writes the token and device id into .env with mode 0600", async () => {
