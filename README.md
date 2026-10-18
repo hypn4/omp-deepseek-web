@@ -19,8 +19,8 @@ repository and plugin package name changed.
 - `deepseek-web/deepseek-web` model in omp
 - Incremental thinking/text streaming, with web-search progress in the omp status
   line (`searching…`, `composing…`)
-- Automatic continuation when an answer is cut off mid-thought, using the same
-  DeepSeek chat session (at most two follow-up requests)
+- Native recovery through DeepSeek's `/api/v0/chat/continue` and
+  `/api/v0/chat/resume_stream`; no browser or text-heuristic fallback
 - Text and image input (PNG, JPEG, WebP, GIF)
 - omp tools (`read`, `edit`, `write`, `bash`, …) through a text tool-call bridge
 - Chrome native-messaging token bridge with owner-only token files
@@ -171,8 +171,12 @@ omp --no-extensions \
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DEEPSEEK_WEB_THINKING` | `1` | Enable DeepThink. Set `0` to disable. |
+| `DEEPSEEK_WEB_THINKING` | `auto` | `auto` disables DeepThink when tools are advertised (native tool mode) and enables it otherwise. `1`/`0` force it. |
 | `DEEPSEEK_WEB_SEARCH` | `1` | Enable web search. Set `0` to disable. |
+| `DEEPSEEK_WEB_PLATFORM` | `android` | Native client platform header. |
+| `DEEPSEEK_WEB_CLIENT_VERSION` | `2.6.2` | Native client version header. |
+| `DEEPSEEK_WEB_BUNDLE_ID` | `com.deepseek.chat.nov` | Native client bundle id header. |
+| `DEEPSEEK_WEB_DEVICE_MODEL` | `Android` | Native device-model header. |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
 The token and device id are stored at:
@@ -208,10 +212,12 @@ bun extension/install.ts --uninstall
 - **Streaming tool calls.** Thinking and answer text stream incrementally, but
   tool calls are emitted after the response completes because the text protocol
   must be parsed as a whole.
-- **Truncation recovery is heuristic.** The web API does not expose a reliable
-  finish reason. A response that ends in an unfinished sentence is continued
-  automatically; after two attempts the provider reports a length stop instead
-  of pretending the partial answer is complete.
+- **Recovery depends on native signals.** The provider follows
+  `incomplete_message`/length finish reasons through `/chat/continue`, and
+  reconnects an interrupted stream through `/chat/resume_stream`. It does not
+  guess truncation from punctuation or sentence shape. If the server reports
+  `FINISHED` without an incomplete signal, there is no native continuation to
+  invoke; the partial result is surfaced with a length-stop warning.
 - **Text tool bridge.** DeepSeek web has no native tool calling. Tool calls are
   parsed from a prompted format and can break if the model or hidden system
   prompt changes.

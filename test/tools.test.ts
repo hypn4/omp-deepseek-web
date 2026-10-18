@@ -61,6 +61,23 @@ describe("parseToolCalls", () => {
     expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
   });
 
+  test("parses doubled DSML bars around parameter tags", () => {
+    const text = [
+      dsmlOpen("tool_calls"),
+      dsmlOpen('invoke name="web_search"'),
+      `<${PIPE}${PIPE}DSML${PIPE}${PIPE} parameter name="i" string="true">Searching</${PIPE}DSML${PIPE}parameter>`,
+      `<${PIPE}${PIPE}DSML${PIPE}${PIPE} parameter name="query" string="true">linux.do</${PIPE}DSML${PIPE}parameter>`,
+      `</invoke>`,
+      `</tool_calls>`,
+    ].join("\n");
+
+    const calls = parseToolCalls(text);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("web_search");
+    expect(calls[0]?.arguments).toBe('{"i":"Searching","query":"linux.do"}');
+  });
+
   test("parses a V3.1 block that uses end_of_query as the separator", () => {
     const text = [
       v31("tool_calls_begin"),

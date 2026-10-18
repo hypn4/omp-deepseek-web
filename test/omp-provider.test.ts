@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { AssistantMessage, AssistantMessageEvent } from "@oh-my-pi/pi-ai";
 import { DeepSeekApiError } from "../src/deepseek/client";
-import type { DeepSeekCompletionRequest } from "../src/deepseek/types";
-import type { ParsedToolCall } from "../src/tools/parser";
-import { collectCompletion } from "../omp-extension/collect";
-import type { EventSink, ModelIdentity } from "../omp-extension/events";
+import { collectCompletion } from "../src/deepseek/collect";
+import type {
+  DeepSeekCompletionRequest,
+  DeepSeekContinueRequest,
+  DeepSeekResumeRequest,
+} from "../src/deepseek/types";
 import { runDeepSeekTurn } from "../omp-extension/provider";
 import type { ProviderDeps } from "../omp-extension/provider";
 import type { PromptContext } from "../omp-extension/prompt";
+import type { EventSink, ModelIdentity } from "../omp-extension/events";
 
 const PIPE = String.fromCharCode(0xff5c);
 const MODEL: ModelIdentity = {
@@ -39,27 +42,42 @@ interface ScriptedResponse {
   thinking?: string;
   messageId?: number;
   finished?: boolean;
+  incompleteMessage?: string;
+  finishReason?: string;
+  hasPendingFragment?: boolean;
 }
 
 function sseBody(
   text: string,
   thinking = "",
-  options: { messageId?: number; finished?: boolean } = {},
+  options: ScriptedResponse = { text },
 ): ReadableStream<Uint8Array> {
-  const fragments: Array<{ type: "THINK" | "RESPONSE"; content: string }> = [];
+  const fragments: Array<Record<string, unknown>> = [];
   if (thinking.length > 0) {
     fragments.push({ type: "THINK", content: thinking });
   }
   if (text.length > 0) {
     fragments.push({ type: "RESPONSE", content: text });
   }
+  if (options.finishReason !== undefined) {
+    fragments.push({ type: "HINT", finish_reason: options.finishReason });
+  }
+  const response = {
+    fragments,
+    ...(options.incompleteMessage === undefined
+      ? {}
+      : { incomplete_message: options.incompleteMessage }),
+    ...(options.hasPendingFragment === undefined
+      ? {}
+      : { has_pending_fragment: options.hasPendingFragment }),
+  };
   const ready =
     options.messageId === undefined
       ? ""
       : `event: ready\ndata: ${JSON.stringify({ response_message_id: options.messageId })}\n\n`;
   const body =
     ready +
-    `data: ${JSON.stringify({ v: { response: { fragments } } })}\n\n` +
+    `data: ${JSON.stringify({ v: { response } })}\n\n` +
     (options.finished === false
       ? ""
       : 'data: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n');
@@ -72,6 +90,14 @@ interface FakeClient {
     request: DeepSeekCompletionRequest,
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>>;
+  continueCompletion(
+    request: DeepSeekContinueRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>>;
+  resumeStream(
+    request: DeepSeekResumeRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>>;
   deleteSession(sessionId: string): Promise<void>;
   uploadFile?(file: {
     data: Uint8Array;
@@ -81,19 +107,42 @@ interface FakeClient {
   waitForFileReady?(id: string, signal?: AbortSignal): Promise<void>;
 }
 
+function nextStream(
+  queue: ScriptedResponse[] | undefined,
+  fallback: ScriptedResponse,
+  kind: string,
+): ReadableStream<Uint8Array> {
+  if (queue === undefined) {
+    return sseBody(fallback.text, fallback.thinking ?? "", fallback);
+  }
+  const scripted = queue.shift();
+  if (scripted === undefined) {
+    throw new Error(`unexpected extra ${kind} request`);
+  }
+  return sseBody(scripted.text, scripted.thinking ?? "", scripted);
+}
+
 function providerDeps(options: {
   text?: string;
   thinking?: string;
   responses?: ScriptedResponse[];
+  continueResponses?: ScriptedResponse[];
+  resumeResponses?: ScriptedResponse[];
   token?: string | null;
   completeError?: Error;
   onDelete?: (sessionId: string) => void;
   onComplete?: (request: DeepSeekCompletionRequest) => void;
+  onContinue?: (request: DeepSeekContinueRequest) => void;
+  onResume?: (request: DeepSeekResumeRequest) => void;
   onUpload?: (file: { data: Uint8Array; name: string; mimeType: string }) => void;
   onWait?: (id: string) => void;
 }): ProviderDeps {
   let uploadCount = 0;
   const responses = options.responses === undefined ? undefined : [...options.responses];
+  const continueResponses =
+    options.continueResponses === undefined ? undefined : [...options.continueResponses];
+  const resumeResponses =
+    options.resumeResponses === undefined ? undefined : [...options.resumeResponses];
   const client: FakeClient = {
     async createSession() {
       return "session-1";
@@ -103,14 +152,19 @@ function providerDeps(options: {
       if (options.completeError) {
         throw options.completeError;
       }
-      if (responses !== undefined) {
-        const scripted = responses.shift();
-        if (scripted === undefined) {
-          throw new Error("unexpected extra completion request");
-        }
-        return sseBody(scripted.text, scripted.thinking ?? "", scripted);
-      }
-      return sseBody(options.text ?? "", options.thinking ?? "");
+      return nextStream(
+        responses,
+        { text: options.text ?? "", thinking: options.thinking ?? "" },
+        "completion",
+      );
+    },
+    async continueCompletion(request) {
+      options.onContinue?.(request);
+      return nextStream(continueResponses, { text: "" }, "continue");
+    },
+    async resumeStream(request) {
+      options.onResume?.(request);
+      return nextStream(resumeResponses, { text: "" }, "resume");
     },
     async deleteSession(sessionId) {
       options.onDelete?.(sessionId);
@@ -125,7 +179,7 @@ function providerDeps(options: {
     },
   };
   return {
-    readToken: () => options.token === undefined ? "stored-token" : options.token,
+    readToken: () => (options.token === undefined ? "stored-token" : options.token),
     readDeviceId: () => "device-1",
     createClient: () => client,
     buildPrompt: () => "rendered prompt",
@@ -157,65 +211,95 @@ describe("DeepSeek omp provider", () => {
     expect(deleted).toEqual(["session-1"]);
   });
 
-  test("continues a truncated answer in the same session", async () => {
-    const requests: DeepSeekCompletionRequest[] = [];
+  test("uses native continue when incomplete_message is present", async () => {
+    const continues: DeepSeekContinueRequest[] = [];
     const sink = await run(
       providerDeps({
         responses: [
-          { text: "The answer is incomplete but", messageId: 2, finished: false },
-          { text: " it finishes here.", messageId: 4 },
+          { text: "The answer is incomplete", messageId: 2, incompleteMessage: "cut" },
         ],
-        onComplete: (value) => requests.push(value),
+        continueResponses: [{ text: " and finishes.", messageId: 4 }],
+        onContinue: (request) => continues.push(request),
       }),
     );
 
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toMatchObject({
-      chatSessionId: "session-1",
-      parentMessageId: 2,
-      thinkingEnabled: false,
-      searchEnabled: false,
-    });
-    expect(requests[1]?.prompt).toContain("The answer is incomplete but");
+    expect(continues).toEqual([
+      { chatSessionId: "session-1", messageId: 2, fallbackToResume: true },
+    ]);
     expect(sink.failure).toBeUndefined();
     expect(sink.ended?.content).toEqual([
-      { type: "text", text: "The answer is incomplete but it finishes here." },
+      { type: "text", text: "The answer is incomplete and finishes." },
     ]);
+    expect(sink.ended?.stopReason).toBe("stop");
+  });
+
+  test("uses native continue for a length finish reason", async () => {
+    const continues: DeepSeekContinueRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [{ text: "partial", messageId: 2, finishReason: "length" }],
+        continueResponses: [{ text: " complete", messageId: 4 }],
+        onContinue: (request) => continues.push(request),
+      }),
+    );
+
+    expect(continues).toHaveLength(1);
+    expect(sink.ended?.content).toEqual([{ type: "text", text: "partial complete" }]);
+  });
+
+  test("uses native resume when the stream did not finish", async () => {
+    const resumes: DeepSeekResumeRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [{ text: "partial", messageId: 2, finished: false }],
+        resumeResponses: [{ text: " rest", messageId: 2 }],
+        onResume: (request) => resumes.push(request),
+      }),
+    );
+
+    expect(resumes).toEqual([{ chatSessionId: "session-1", messageId: 2 }]);
+    expect(sink.ended?.content).toEqual([{ type: "text", text: "partial rest" }]);
+  });
+
+  test("replaces partial text when native resume returns the full message", async () => {
+    const sink = await run(
+      providerDeps({
+        responses: [{ text: "Hello", messageId: 2, finished: false }],
+        resumeResponses: [{ text: "Hello world", messageId: 2 }],
+      }),
+    );
+
     const streamed = sink.events
       .filter((event) => event.type === "text_delta")
       .map((event) => (event.type === "text_delta" ? event.delta : ""))
       .join("");
-    expect(streamed).toBe("The answer is incomplete but it finishes here.");
-    expect(sink.ended?.stopReason).toBe("stop");
+    expect(streamed).toBe("Hello world");
+    expect(sink.ended?.content).toEqual([{ type: "text", text: "Hello world" }]);
   });
 
-  test("continues an answer that ends with an ellipsis", async () => {
-    const requests: DeepSeekCompletionRequest[] = [];
+  test("does not infer truncation from text shape", async () => {
+    const continues: DeepSeekContinueRequest[] = [];
     const sink = await run(
       providerDeps({
-        responses: [
-          { text: "The answer is incomplete…", messageId: 2 },
-          { text: " and finishes here.", messageId: 4 },
-        ],
-        onComplete: (value) => requests.push(value),
+        responses: [{ text: "The answer is incomplete…", messageId: 2 }],
+        onContinue: (request) => continues.push(request),
       }),
     );
 
-    expect(requests).toHaveLength(2);
+    expect(continues).toHaveLength(0);
     expect(sink.ended?.content).toEqual([
-      { type: "text", text: "The answer is incomplete… and finishes here." },
+      { type: "text", text: "The answer is incomplete…" },
     ]);
+    expect(sink.ended?.stopReason).toBe("stop");
   });
 
-  test("streams a long continuation exactly once", async () => {
-    const first = "x".repeat(120) + " but";
+  test("streams a long native continuation exactly once", async () => {
+    const first = "x".repeat(120);
     const second = " finished.";
     const sink = await run(
       providerDeps({
-        responses: [
-          { text: first, messageId: 2 },
-          { text: second, messageId: 4 },
-        ],
+        responses: [{ text: first, messageId: 2, incompleteMessage: "cut" }],
+        continueResponses: [{ text: second, messageId: 4 }],
       }),
     );
 
@@ -226,83 +310,35 @@ describe("DeepSeek omp provider", () => {
     expect(streamed).toBe(first + second);
   });
 
-  test("retries with a forced prompt when the model claims a cut-off answer is complete", async () => {
-    const requests: DeepSeekCompletionRequest[] = [];
+  test("caps native recoveries and marks the answer as length-limited", async () => {
+    const continues: DeepSeekContinueRequest[] = [];
     const sink = await run(
       providerDeps({
-        responses: [
-          { text: "The answer is incomplete but", messageId: 2 },
-          { text: "[COMPLETE]", messageId: 4 },
-          { text: " it finishes here.", messageId: 6 },
+        responses: [{ text: "part one", messageId: 2, incompleteMessage: "cut" }],
+        continueResponses: [
+          { text: " part two", messageId: 4, incompleteMessage: "cut" },
+          { text: " part three", messageId: 6, incompleteMessage: "cut" },
         ],
-        onComplete: (value) => requests.push(value),
+        onContinue: (request) => continues.push(request),
       }),
     );
 
-    expect(requests).toHaveLength(3);
-    expect(requests[2]?.parentMessageId).toBe(2);
-    expect(requests[2]?.prompt).toContain("Do not output [COMPLETE]");
+    expect(continues).toHaveLength(2);
     expect(sink.ended?.content).toEqual([
-      { type: "text", text: "The answer is incomplete but it finishes here." },
-    ]);
-    expect(sink.ended?.stopReason).toBe("stop");
-  });
-
-  test("marks length when even the forced continuation claims complete", async () => {
-    const requests: DeepSeekCompletionRequest[] = [];
-    const sink = await run(
-      providerDeps({
-        responses: [
-          { text: "The answer is incomplete but", messageId: 2 },
-          { text: "[COMPLETE]", messageId: 4 },
-          { text: "[COMPLETE]", messageId: 6 },
-        ],
-        onComplete: (value) => requests.push(value),
-      }),
-    );
-
-    expect(requests).toHaveLength(3);
-    expect(sink.ended?.content).toEqual([
-      { type: "text", text: "The answer is incomplete but" },
+      { type: "text", text: "part one part two part three" },
     ]);
     expect(sink.ended?.stopReason).toBe("length");
   });
 
-  test("caps continuation attempts and marks the answer as length-limited", async () => {
-    const requests: DeepSeekCompletionRequest[] = [];
+  test("fails when an incomplete answer has no message id", async () => {
     const sink = await run(
       providerDeps({
-        responses: [
-          { text: "part one but", messageId: 2 },
-          { text: " part two but", messageId: 4 },
-          { text: " part three but", messageId: 6 },
-        ],
-        onComplete: (value) => requests.push(value),
+        responses: [{ text: "partial", incompleteMessage: "cut" }],
       }),
     );
 
-    expect(requests).toHaveLength(3);
-    expect(sink.ended?.content).toEqual([
-      { type: "text", text: "part one but part two but part three but" },
-    ]);
-    expect(sink.ended?.stopReason).toBe("length");
-  });
-
-  test("includes the answer tail when no parent message id is available", async () => {
-    const requests: DeepSeekCompletionRequest[] = [];
-    await run(
-      providerDeps({
-        responses: [
-          { text: "The answer is incomplete but", finished: false },
-          { text: " it finishes here.", messageId: 4 },
-        ],
-        onComplete: (value) => requests.push(value),
-      }),
-    );
-
-    expect(requests[1]?.parentMessageId).toBeNull();
-    expect(requests[1]?.prompt).toContain("The answer is incomplete but");
-    expect(requests[1]?.prompt).toContain("Continue");
+    expect(sink.failure).toBeInstanceOf(DeepSeekApiError);
+    expect(String(sink.failure)).toContain("message id");
   });
 
   test("defaults thinking and search on", async () => {
@@ -413,8 +449,10 @@ describe("DeepSeek omp provider", () => {
   });
 
   test("returns an error for an empty stream", async () => {
-    const error = await collectCompletion(new Response("").body!, new AbortController().signal)
-      .catch((value: unknown) => value);
+    const error = await collectCompletion(
+      new Response("").body!,
+      new AbortController().signal,
+    ).catch((value: unknown) => value);
 
     expect(error).toBeInstanceOf(DeepSeekApiError);
   });
@@ -424,25 +462,23 @@ describe("DeepSeek omp provider", () => {
       start(controller) {
         controller.enqueue(
           new TextEncoder().encode(
-            `data: {"v":{"response":{"fragments":[{"type":"RESPONSE","content":"partial"}]}}}\n\n`,
+            'data: {"v":{"response":{"fragments":[{"type":"RESPONSE","content":"partial"}]}}}\n\n',
           ),
         );
         controller.close();
       },
     });
 
-    const result = await collectCompletion(
-      broken,
-      new AbortController().signal,
-    );
+    const result = await collectCompletion(broken, new AbortController().signal);
 
     expect(result.text).toBe("partial");
+    expect(result.finished).toBe(false);
   });
 
   test("reports incremental progress before the stream finishes", async () => {
     const chunks = [
-      `data: {"v":{"response":{"fragments":[{"type":"RESPONSE","content":"hel"}]}}}\n\n`,
-      `data: {"v":"lo"}\n\ndata: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n`,
+      'data: {"v":{"response":{"fragments":[{"type":"RESPONSE","content":"hel"}]}}}\n\n',
+      'data: {"v":"lo"}\n\ndata: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n',
     ];
     let index = 0;
     const stream = new ReadableStream<Uint8Array>({

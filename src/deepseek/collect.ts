@@ -1,6 +1,6 @@
-import { DeepSeekApiError } from "../src/deepseek/client";
-import { DeepSeekSseParser } from "../src/deepseek/sse";
-import type { DeepSeekSseResult } from "../src/deepseek/sse";
+import { DeepSeekApiError } from "./client";
+import { DeepSeekSseParser } from "./sse";
+import type { DeepSeekSseResult } from "./sse";
 
 export type CompletionProgress = (result: DeepSeekSseResult) => void;
 

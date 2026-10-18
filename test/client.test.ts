@@ -151,6 +151,75 @@ describe("DeepSeekClient", () => {
     expect(await new Response(stream).text()).toBe('data: {"v":"hello"}\n\n');
   });
 
+  test("continueCompletion calls the native continue endpoint without PoW", async () => {
+    const calls = installFetch(
+      new Response('data: {"v":"more"}\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+
+    const stream = await makeClient().continueCompletion({
+      chatSessionId: "session-1",
+      messageId: 2,
+    });
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0]!;
+    expect(call.url).toBe("https://chat.deepseek.com/api/v0/chat/continue");
+    expect(JSON.parse(String(call.init.body))).toEqual({
+      chat_session_id: "session-1",
+      message_id: 2,
+      fallback_to_resume: true,
+    });
+    expect(new Headers(call.init.headers).get("x-ds-pow-response")).toBeNull();
+    expect(await new Response(stream).text()).toBe('data: {"v":"more"}\n\n');
+  });
+
+  test("resumeStream calls the native resume endpoint", async () => {
+    const calls = installFetch(
+      new Response('data: {"v":"resumed"}\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+
+    const stream = await makeClient().resumeStream({
+      chatSessionId: "session-1",
+      messageId: 2,
+    });
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0]!;
+    expect(call.url).toBe("https://chat.deepseek.com/api/v0/chat/resume_stream");
+    expect(JSON.parse(String(call.init.body))).toEqual({
+      chat_session_id: "session-1",
+      message_id: 2,
+      interaction_type: "Text",
+    });
+    expect(new Headers(call.init.headers).get("x-ds-pow-response")).toBeNull();
+    expect(await new Response(stream).text()).toBe('data: {"v":"resumed"}\n\n');
+  });
+
+  test("native client identity headers are configurable", async () => {
+    const calls = installFetch(jsonResponse(envelope({ chat_session: { id: "session-1" } })));
+    const client = new DeepSeekClient({
+      baseUrl: "https://chat.deepseek.com/",
+      token: "test-token",
+      deviceId: "device-1",
+      platform: "android",
+      clientVersion: "2.6.2",
+      bundleId: "com.deepseek.chat.nov",
+      deviceModel: "Pixel 7",
+    });
+
+    await client.createSession();
+
+    const headers = new Headers(calls[0]!.init.headers);
+    expect(headers.get("x-client-platform")).toBe("android");
+    expect(headers.get("x-client-version")).toBe("2.6.2");
+    expect(headers.get("x-client-bundle-id")).toBe("com.deepseek.chat.nov");
+    expect(headers.get("x-device-model")).toBe("Pixel 7");
+  });
+
   test("checkDevice adopts the rotated token", async () => {
     const calls = installFetch(
       jsonResponse(envelope({ rotate: true, data: { token: "rotated-token" } })),

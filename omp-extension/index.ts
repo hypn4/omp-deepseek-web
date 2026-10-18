@@ -8,6 +8,7 @@ import {
   writeAuthValue,
 } from "../src/auth/token-store";
 import { DeepSeekClient } from "../src/deepseek/client";
+import { resolveThinkingEnabled } from "../src/deepseek/options";
 import type { PromptContext, PromptTool } from "./prompt";
 import { buildOmpPrompt } from "./prompt";
 import { runDeepSeekTurn } from "./provider";
@@ -80,6 +81,10 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
               token,
               deviceId,
               tokenCommand: process.env.DEEPSEEK_WEB_TOKEN_CMD,
+              platform: process.env.DEEPSEEK_WEB_PLATFORM ?? "android",
+              clientVersion: process.env.DEEPSEEK_WEB_CLIENT_VERSION ?? "2.6.2",
+              bundleId: process.env.DEEPSEEK_WEB_BUNDLE_ID ?? "com.deepseek.chat.nov",
+              deviceModel: process.env.DEEPSEEK_WEB_DEVICE_MODEL ?? "Android",
             }),
           buildPrompt: promptFor,
           onStatus: setStatus,
@@ -88,7 +93,12 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
         context as unknown as PromptContext,
         {
           signal: options?.signal,
-          thinkingEnabled: process.env.DEEPSEEK_WEB_THINKING !== "0",
+          // Native tool turns run without DeepThink. `DEEPSEEK_WEB_THINKING=1`
+          // explicitly opts into thinking even when tools are advertised.
+          thinkingEnabled: resolveThinkingEnabled(
+            process.env.DEEPSEEK_WEB_THINKING,
+            (context.tools?.length ?? 0) > 0,
+          ),
           searchEnabled: process.env.DEEPSEEK_WEB_SEARCH !== "0",
         },
         stream,

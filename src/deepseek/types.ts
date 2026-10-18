@@ -7,6 +7,12 @@ export interface DeepSeekConfig {
   locale?: string;
   timezoneOffset?: string;
   clientVersion?: string;
+  /** Client platform header; native Android is `android`, web is `web`. */
+  platform?: string;
+  /** Client bundle id header. */
+  bundleId?: string;
+  /** Device model header. */
+  deviceModel?: string;
   /**
    * Shell command that prints a fresh token on stdout. Run once when the
    * device rotation does not produce a new token.
@@ -24,6 +30,20 @@ export interface DeepSeekCompletionRequest {
   searchEnabled?: boolean;
   action?: string | null;
   preempt?: boolean;
+}
+
+export interface DeepSeekContinueRequest {
+  chatSessionId: string;
+  /** Assistant message id that was cut off. */
+  messageId: number;
+  /** Native clients set this so the server can resume the stream if needed. */
+  fallbackToResume?: boolean;
+}
+
+export interface DeepSeekResumeRequest {
+  chatSessionId: string;
+  messageId: number;
+  interactionType?: "Text" | "Call";
 }
 
 export interface DeepSeekUploadFile {

@@ -2,12 +2,16 @@ import { PowError, solvePow } from "./pow";
 import type {
   DeepSeekCompletionRequest,
   DeepSeekConfig,
+  DeepSeekContinueRequest,
   DeepSeekPowChallenge,
+  DeepSeekResumeRequest,
   DeepSeekUploadFile,
   WaitForFileOptions,
 } from "./types";
 
 const COMPLETION_PATH = "/api/v0/chat/completion";
+const CONTINUE_PATH = "/api/v0/chat/continue";
+const RESUME_PATH = "/api/v0/chat/resume_stream";
 const FILE_UPLOAD_PATH = "/api/v0/file/upload_file";
 const FILE_FETCH_PATH = "/api/v0/file/fetch_files";
 const CLIENT_BUNDLE_ID = "com.deepseek.chat";
@@ -87,6 +91,9 @@ export class DeepSeekClient {
   readonly #locale: string;
   readonly #timezoneOffset: string;
   readonly #clientVersion: string;
+  readonly #platform: string;
+  readonly #bundleId: string;
+  readonly #deviceModel: string;
   readonly #tokenCommand: string | undefined;
 
   constructor(config: DeepSeekConfig) {
@@ -96,6 +103,9 @@ export class DeepSeekClient {
     this.#locale = config.locale ?? "en_US";
     this.#timezoneOffset = config.timezoneOffset ?? "32400";
     this.#clientVersion = config.clientVersion ?? "2.5.0";
+    this.#platform = config.platform ?? "web";
+    this.#bundleId = config.bundleId ?? CLIENT_BUNDLE_ID;
+    this.#deviceModel = config.deviceModel ?? "";
     this.#tokenCommand = config.tokenCommand;
   }
 
@@ -110,13 +120,13 @@ export class DeepSeekClient {
       headers.set("content-type", "application/json");
     }
     headers.set("authorization", `Bearer ${token}`);
-    headers.set("x-client-platform", "web");
+    headers.set("x-client-platform", this.#platform);
     headers.set("x-client-version", this.#clientVersion);
-    headers.set("x-client-bundle-id", CLIENT_BUNDLE_ID);
+    headers.set("x-client-bundle-id", this.#bundleId);
     headers.set("x-client-locale", this.#locale);
     headers.set("x-client-timezone-offset", this.#timezoneOffset);
     headers.set("x-device-id", this.#deviceId);
-    headers.set("x-device-model", "");
+    headers.set("x-device-model", this.#deviceModel);
     return fetch(`${this.#baseUrl}${path}`, { ...init, headers });
   }
 
@@ -323,25 +333,97 @@ export class DeepSeekClient {
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
     const challenge = await this.createChallenge(COMPLETION_PATH);
-    const powHeader = this.#powHeader(challenge, COMPLETION_PATH);
-
-    const response = await this.#request(COMPLETION_PATH, {
-      method: "POST",
-      body: JSON.stringify({
-        chat_session_id: req.chatSessionId,
-        parent_message_id: req.parentMessageId ?? null,
-        model_type: req.modelType ?? "default",
-        prompt: req.prompt,
-        ref_file_ids: req.refFileIds ?? [],
-        thinking_enabled: req.thinkingEnabled ?? false,
-        search_enabled: req.searchEnabled ?? false,
-        action: req.action ?? null,
-        preempt: req.preempt ?? false,
-      }),
-      headers: { "x-ds-pow-response": powHeader },
+    return this.#streamRequest(
+      COMPLETION_PATH,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          chat_session_id: req.chatSessionId,
+          parent_message_id: req.parentMessageId ?? null,
+          model_type: req.modelType ?? "default",
+          prompt: req.prompt,
+          ref_file_ids: req.refFileIds ?? [],
+          thinking_enabled: req.thinkingEnabled ?? false,
+          search_enabled: req.searchEnabled ?? false,
+          action: req.action ?? null,
+          preempt: req.preempt ?? false,
+        }),
+        headers: { "x-ds-pow-response": this.#powHeader(challenge, COMPLETION_PATH) },
+        signal,
+      },
       signal,
-    });
+    );
+  }
 
+  /**
+   * Native continuation endpoint (`/api/v0/chat/continue`). The request names
+   * the cut-off assistant message, not the next user prompt; the server appends
+   * the missing output to that message.
+   */
+  async continueCompletion(
+    req: DeepSeekContinueRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.#withRetry(() => this.#continueOnce(req, signal), signal);
+  }
+
+  async #continueOnce(
+    req: DeepSeekContinueRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    // The native contract does not mint a PoW challenge for continue; the
+    // request names an existing assistant message instead.
+    return this.#streamRequest(
+      CONTINUE_PATH,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          chat_session_id: req.chatSessionId,
+          message_id: req.messageId,
+          fallback_to_resume: req.fallbackToResume ?? true,
+        }),
+        signal,
+      },
+      signal,
+    );
+  }
+
+  /**
+   * Native stream-resume endpoint. Unlike continue, this does not mint a PoW
+   * challenge; it reattaches to an in-flight assistant message.
+   */
+  async resumeStream(
+    req: DeepSeekResumeRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.#withRetry(() => this.#resumeOnce(req, signal), signal);
+  }
+
+  async #resumeOnce(
+    req: DeepSeekResumeRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.#streamRequest(
+      RESUME_PATH,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          chat_session_id: req.chatSessionId,
+          message_id: req.messageId,
+          interaction_type: req.interactionType ?? "Text",
+        }),
+        signal,
+      },
+      signal,
+    );
+  }
+
+  async #streamRequest(
+    path: string,
+    init: RequestInit,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const response = await this.#request(path, { ...init, signal });
     if (!response.ok) {
       await this.#throwResponseError(response);
     }
@@ -349,13 +431,13 @@ export class DeepSeekClient {
     if (!contentType.includes("text/event-stream")) {
       await this.#throwResponseError(
         response,
-        `DeepSeek returned a non-stream completion response (HTTP ${response.status})`,
+        `DeepSeek returned a non-stream response (HTTP ${response.status})`,
       );
     }
     if (response.body === null) {
       throw new DeepSeekApiError(
         -1,
-        "DeepSeek returned an empty completion stream",
+        "DeepSeek returned an empty stream",
         response.status,
       );
     }

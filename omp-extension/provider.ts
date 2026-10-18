@@ -1,15 +1,16 @@
 import { TokenError } from "../src/deepseek/client";
-import {
-  buildContinuationPrompt,
-  isContinuationComplete,
-  isLikelyIncomplete,
-  mergeContinuation,
-} from "../src/deepseek/continuation";
-import type { DeepSeekCompletionRequest } from "../src/deepseek/types";
+import type {
+  DeepSeekCompletionRequest,
+  DeepSeekContinueRequest,
+  DeepSeekResumeRequest,
+} from "../src/deepseek/types";
 import type { DeepSeekSseResult } from "../src/deepseek/sse";
+import {
+  needsNativeContinuation,
+  runNativeCompletion,
+} from "../src/deepseek/native-turn";
 import { stripToolMarkup } from "../src/openai/translate";
 import { parseToolCalls } from "../src/tools/parser";
-import { collectCompletion } from "./collect";
 import type { EventSink, ModelIdentity } from "./events";
 import { StreamingCompletion } from "./events";
 import { collectTurnImages } from "./prompt";
@@ -19,6 +20,14 @@ export interface DeepSeekClientLike {
   createSession(): Promise<string>;
   complete(
     request: DeepSeekCompletionRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>>;
+  continueCompletion(
+    request: DeepSeekContinueRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array>>;
+  resumeStream(
+    request: DeepSeekResumeRequest,
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>>;
   deleteSession(sessionId: string): Promise<void>;
@@ -74,9 +83,6 @@ function searchStatusLabel(status: string): string {
   }
   return `DeepSeek Web: ${normalized}`;
 }
-
-/** One initial completion plus at most two continuation requests. */
-const MAX_CONTINUATIONS = 2;
 
 export interface ProviderTurnOptions {
   signal?: AbortSignal;
@@ -154,16 +160,6 @@ export async function runDeepSeekTurn(
     }
 
     sessionId = await client.createSession();
-    const upstream = await client.complete(
-      {
-        chatSessionId: sessionId,
-        prompt,
-        refFileIds,
-        thinkingEnabled: options.thinkingEnabled ?? true,
-        searchEnabled: options.searchEnabled ?? true,
-      },
-      signal,
-    );
 
     let lastText = "";
     let lastThinking = "";
@@ -196,93 +192,25 @@ export async function runDeepSeekTurn(
       }
     };
 
-    const result = await collectCompletion(upstream, signal, onProgress);
-
-    if (signal.aborted) {
-      emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
-      return;
-    }
-
-    let text = result.text;
-    let thinking = result.thinking;
-    let finished = result.finished;
-    let messageId = result.messageId;
-    let continuations = 0;
-    let lengthLimited = false;
-    let forceContinuation = false;
-
-    while (true) {
-      const toolCalls =
-        (context.tools?.length ?? 0) > 0 ? parseToolCalls(text) : [];
-      if (toolCalls.length > 0) {
-        break;
-      }
-      if (!isLikelyIncomplete({ text, finished })) {
-        break;
-      }
-      if (continuations >= MAX_CONTINUATIONS) {
-        lengthLimited = true;
-        break;
-      }
-
-      continuations += 1;
-      deps.onStatus?.("DeepSeek Web: continuing…");
-      const continuationPrompt = buildContinuationPrompt(
-        text,
-        forceContinuation,
-      );
-      let continuation;
-      try {
-        const continuationStream = await client.complete(
-          {
-            chatSessionId: sessionId,
-            parentMessageId: messageId ?? null,
-            prompt: continuationPrompt,
-            refFileIds: [],
-            thinkingEnabled: false,
-            searchEnabled: false,
-          },
-          signal,
+    const result = await runNativeCompletion(
+      client,
+      {
+        chatSessionId: sessionId,
+        prompt,
+        refFileIds,
+        thinkingEnabled: options.thinkingEnabled ?? true,
+        searchEnabled: options.searchEnabled ?? true,
+      },
+      signal,
+      onProgress,
+      (recovery) => {
+        deps.onStatus?.(
+          recovery === "continue"
+            ? "DeepSeek Web: continuing…"
+            : "DeepSeek Web: resuming…",
         );
-        // The continuation is buffered and merged below; streaming it here
-        // would duplicate any overlapping text after the merge.
-        continuation = await collectCompletion(continuationStream, signal);
-      } catch (error) {
-        if (signal.aborted) {
-          throw error;
-        }
-        deps.onStatus?.("DeepSeek Web: continuation failed");
-        lengthLimited = true;
-        break;
-      }
-
-      const previousText = text;
-      const addition = continuation.text;
-      const merged = mergeContinuation(previousText, addition);
-      if (merged.startsWith(previousText) && merged.length > previousText.length) {
-        emitter.textDelta(merged.slice(previousText.length));
-      }
-      text = merged;
-      thinking += continuation.thinking;
-      finished = continuation.finished;
-
-      if (isContinuationComplete(addition)) {
-        if (continuations >= MAX_CONTINUATIONS) {
-          lengthLimited = true;
-          break;
-        }
-        forceContinuation = true;
-        continue;
-      }
-      messageId = continuation.messageId;
-      forceContinuation = false;
-      if (merged === previousText) {
-        if (isLikelyIncomplete({ text, finished })) {
-          lengthLimited = true;
-        }
-        break;
-      }
-    }
+      },
+    );
 
     if (signal.aborted) {
       emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
@@ -290,17 +218,19 @@ export async function runDeepSeekTurn(
     }
 
     const toolCalls =
-      (context.tools?.length ?? 0) > 0 ? parseToolCalls(text) : [];
+      (context.tools?.length ?? 0) > 0 ? parseToolCalls(result.text) : [];
     const finalText =
-      toolCalls.length > 0 ? stripToolMarkup(text) : text;
+      toolCalls.length > 0 ? stripToolMarkup(result.text) : result.text;
+    const incomplete =
+      needsNativeContinuation(result) || !result.finished;
     emitter.finish({
       text: finalText,
-      thinking,
+      thinking: result.thinking,
       toolCalls,
-      ...(lengthLimited ? { stopReason: "length" as const } : {}),
+      ...(incomplete ? { stopReason: "length" as const } : {}),
     });
     deps.onStatus?.(
-      lengthLimited ? "DeepSeek Web: truncated" : "DeepSeek Web ✓",
+      incomplete ? "DeepSeek Web: truncated" : "DeepSeek Web ✓",
     );
   } catch (error) {
     const failure = signal.aborted ? (signal.reason ?? error) : tokenError(error);

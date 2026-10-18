@@ -9,6 +9,12 @@ export interface DeepSeekSseResult {
   finished: boolean;
   /** Upstream response message id, when the ready event supplied one. */
   messageId?: number;
+  /** Native `incomplete_message` marker; presence means the answer was cut off. */
+  incompleteMessage?: string;
+  /** Native `has_pending_fragment` flag. */
+  hasPendingFragment?: boolean;
+  /** Native finish reason from a hint fragment. */
+  finishReason?: string;
   /** Current web-search phase reported by the web API, when present. */
   searchStatus?: string;
 }
@@ -111,8 +117,19 @@ export class DeepSeekSseParser {
     const fragments = this.#get("response/fragments");
     const response = this.#get("response");
     let searchStatus: string | undefined;
+    let incompleteMessage: string | undefined;
+    let hasPendingFragment: boolean | undefined;
+    let finishReason: string | undefined;
     let hasSearchFragment = false;
     if (typeof response === "object" && response !== null) {
+      const rawIncomplete = (response as JsonRecord).incomplete_message;
+      if (typeof rawIncomplete === "string") {
+        incompleteMessage = rawIncomplete;
+      }
+      const rawPending = (response as JsonRecord).has_pending_fragment;
+      if (typeof rawPending === "boolean") {
+        hasPendingFragment = rawPending;
+      }
       const rawStatus = (response as JsonRecord).search_status;
       if (typeof rawStatus === "string" && rawStatus !== "") {
         searchStatus = rawStatus;
@@ -130,6 +147,9 @@ export class DeepSeekSseParser {
           continue;
         }
         const entry = fragment as JsonRecord;
+        if (typeof entry.finish_reason === "string" && entry.finish_reason !== "") {
+          finishReason = entry.finish_reason;
+        }
         if (
           typeof entry.content !== "string" &&
           (entry.type === "TOOL_SEARCH" || entry.type === "TOOL_OPEN")
@@ -162,6 +182,9 @@ export class DeepSeekSseParser {
       thinking: thinking.join(""),
       finished: this.#finished,
       ...(messageId === undefined ? {} : { messageId }),
+      ...(incompleteMessage === undefined ? {} : { incompleteMessage }),
+      ...(hasPendingFragment === undefined ? {} : { hasPendingFragment }),
+      ...(finishReason === undefined ? {} : { finishReason }),
       ...(searchStatus === undefined ? {} : { searchStatus }),
     };
   }
@@ -244,7 +267,7 @@ export class DeepSeekSseParser {
     }
 
     if (op === "") {
-      if (typeof value === "string") {
+      if (typeof value === "string" || Array.isArray(value)) {
         this.#append(path, value);
       } else {
         this.#setAtPath(path, value);

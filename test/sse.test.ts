@@ -100,6 +100,23 @@ describe("DeepSeekSseParser", () => {
     }
   });
 
+  test("appends a fragment array when the operation is omitted", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      [
+        'data: {"v":{"response":{"fragments":[{"type":"RESPONSE","content":"answer"}]}}}',
+        'data: {"p":"response/fragments","v":[{"type":"TIP","content":"footer"}]}',
+        'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
+        "",
+      ].join("\n"),
+    );
+
+    expect(parser.result()).toMatchObject({
+      text: "answer",
+      finished: true,
+    });
+  });
+
   test("appends a path patch that omits the operation", () => {
     const parser = new DeepSeekSseParser();
     parser.feed(
@@ -130,6 +147,24 @@ describe("DeepSeekSseParser", () => {
       thinking: "",
       finished: false,
       searchStatus: "SEARCHING",
+    });
+  });
+
+  test("extracts native incomplete and finish metadata", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      [
+        'data: {"v":{"response":{"status":"FINISHED","fragments":[{"type":"RESPONSE","content":"partial"},{"type":"HINT","finish_reason":"length"}],"incomplete_message":"","has_pending_fragment":false}}}',
+        "",
+      ].join("\n"),
+    );
+
+    expect(parser.result()).toMatchObject({
+      text: "partial",
+      finished: true,
+      incompleteMessage: "",
+      hasPendingFragment: false,
+      finishReason: "length",
     });
   });
 
