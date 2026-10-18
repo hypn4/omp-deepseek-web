@@ -1,16 +1,7 @@
-import type {
-  OpenAIAssistantMessage,
-  OpenAIChatCompletion,
-  OpenAIChatCompletionChunk,
-  OpenAIChunkDelta,
-  OpenAIMessage,
-  OpenAITool,
-} from "./types";
-import type { ParsedToolCall } from "../tools/parser";
+import type { OpenAIMessage, OpenAITool } from "./types";
 import { renderToolPrompt } from "../tools/prompt";
 import { renderToolResults } from "../tools/render";
 
-const MODEL_ID = "deepseek-web";
 const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
 const WORD_BOUNDARY = String.fromCharCode(0x2581);
 const BAR = `(?:${FULLWIDTH_BAR}|\\|)`;
@@ -100,111 +91,4 @@ export function stripToolMarkup(text: string): string {
     .replace(DSML_UNCLOSED_BLOCK, "")
     .replace(V31_UNCLOSED_BLOCK, "")
     .trim();
-}
-
-/**
- * Renders a fully buffered DeepSeek answer as an OpenAI chat-completions SSE
- * body. One content/reasoning delta is emitted first, followed by one delta per
- * tool call, a finish chunk, and `[DONE]`.
- */
-export function toOpenAIChunks(
-  text: string,
-  thinking: string,
-  toolCalls: ParsedToolCall[],
-): string {
-  const id = `chatcmpl-${globalThis.crypto.randomUUID()}`;
-  const created = Math.floor(Date.now() / 1000);
-  const chunks: OpenAIChatCompletionChunk[] = [];
-
-  const firstDelta: OpenAIChunkDelta = { role: "assistant" };
-  if (thinking.length > 0) {
-    firstDelta.reasoning_content = thinking;
-  }
-  if (text.length > 0) {
-    firstDelta.content = text;
-  }
-  chunks.push({
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: MODEL_ID,
-    choices: [{ index: 0, delta: firstDelta, finish_reason: null }],
-  });
-
-  for (const [index, call] of toolCalls.entries()) {
-    chunks.push({
-      id,
-      object: "chat.completion.chunk",
-      created,
-      model: MODEL_ID,
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              {
-                index,
-                id: call.id,
-                type: "function",
-                function: { name: call.name, arguments: call.arguments },
-              },
-            ],
-          },
-          finish_reason: null,
-        },
-      ],
-    });
-  }
-
-  chunks.push({
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: MODEL_ID,
-    choices: [
-      {
-        index: 0,
-        delta: {},
-        finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
-      },
-    ],
-  });
-
-  return `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`;
-}
-
-/** Renders a fully buffered DeepSeek answer as one non-streaming completion. */
-export function toOpenAICompletion(
-  text: string,
-  thinking: string,
-  toolCalls: ParsedToolCall[],
-): OpenAIChatCompletion {
-  const message: OpenAIAssistantMessage = {
-    role: "assistant",
-    content: text.length > 0 ? text : null,
-  };
-  if (thinking.length > 0) {
-    message.reasoning_content = thinking;
-  }
-  if (toolCalls.length > 0) {
-    message.tool_calls = toolCalls.map((call) => ({
-      id: call.id,
-      type: "function",
-      function: { name: call.name, arguments: call.arguments },
-    }));
-  }
-
-  return {
-    id: `chatcmpl-${globalThis.crypto.randomUUID()}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model: MODEL_ID,
-    choices: [
-      {
-        index: 0,
-        message,
-        finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
-      },
-    ],
-  };
 }

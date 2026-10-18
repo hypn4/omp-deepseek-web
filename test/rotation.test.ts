@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { loadConfig } from "../src/config";
 import { DeepSeekClient, TokenError } from "../src/deepseek/client";
 import { PowError } from "../src/deepseek/pow";
-import { startServer } from "../src/server";
 
 const originalFetch = globalThis.fetch;
 
@@ -324,86 +322,4 @@ describe("DeepSeekClient retry", () => {
   });
 });
 
-describe("token command configuration", () => {
-  test("loadConfig reads DEEPSEEK_WEB_TOKEN_CMD", () => {
-    expect(loadConfig({ DEEPSEEK_WEB_TOKEN_CMD: "get-token" }).tokenCommand).toBe(
-      "get-token",
-    );
-    expect(loadConfig({}).tokenCommand).toBeUndefined();
-    expect(
-      loadConfig({ DEEPSEEK_WEB_TOKEN_CMD: "   " }).tokenCommand,
-    ).toBeUndefined();
-  });
 
-  test("the server forwards the token command to the upstream client", async () => {
-    const upstreamCalls: FetchCall[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      upstreamCalls.push({ url, init });
-      const next: Record<string, Response> = {
-        [SESSION_CREATE_URL]: jsonResponse(
-          envelope({ chat_session: { id: "session-1" } }),
-        ),
-        [CHALLENGE_URL]: challengeResponse(),
-        [SESSION_DELETE_URL]: jsonResponse(envelope(null)),
-      };
-      if (url === COMPLETION_URL) {
-        const completions = upstreamCalls.filter(
-          (call) => call.url === COMPLETION_URL,
-        );
-        return completions.length === 1
-          ? completionError(40003)
-          : sseResponse();
-      }
-      if (url === CHECK_DEVICE_URL) {
-        return notRotatedResponse();
-      }
-      const response = next[url];
-      if (response === undefined) {
-        throw new Error(`unexpected upstream call: ${url}`);
-      }
-      return response;
-    }) as typeof fetch;
-
-    const config = loadConfig({
-      DEEPSEEK_WEB_PORT: "0",
-      DEEPSEEK_WEB_BASE_URL: "https://chat.deepseek.com",
-      DEEPSEEK_WEB_TOKEN_CMD: "printf 'cmd-token\\n'",
-    });
-    const server = startServer(config);
-    try {
-      const response = await originalFetch(
-        `http://127.0.0.1:${server.port}/v1/chat/completions`,
-        {
-          method: "POST",
-          headers: {
-            authorization: "Bearer old-token",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: "hello" }],
-            stream: false,
-          }),
-        },
-      );
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({
-        choices: [{ message: { role: "assistant", content: "hello" } }],
-      });
-
-      const completions = upstreamCalls.filter(
-        (call) => call.url === COMPLETION_URL,
-      );
-      expect(completions).toHaveLength(2);
-      expect(authorizationOf(completions[1]!)).toBe("Bearer cmd-token");
-    } finally {
-      server.stop();
-    }
-  });
-});

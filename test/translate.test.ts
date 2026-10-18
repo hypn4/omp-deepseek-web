@@ -1,16 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  buildPrompt,
-  stripToolMarkup,
-  toOpenAIChunks,
-  toOpenAICompletion,
-} from "../src/openai/translate";
-import type {
-  OpenAIChatCompletionChunk,
-  OpenAIMessage,
-  OpenAITool,
-} from "../src/openai/types";
-import type { ParsedToolCall } from "../src/tools/parser";
+import { buildPrompt, stripToolMarkup } from "../src/openai/translate";
+import type { OpenAIMessage, OpenAITool } from "../src/openai/types";
 
 // DeepSeek markers use the fullwidth vertical line U+FF5C. Build them
 // programmatically so the literal tags never appear in test source.
@@ -30,16 +20,6 @@ const READ_TOOL: OpenAITool = {
     },
   },
 };
-
-function parseChunks(body: string): OpenAIChatCompletionChunk[] {
-  return body
-    .split("\n\n")
-    .map((block) => block.trim())
-    .filter((block) => block.length > 0)
-    .map((block) => block.replace(/^data: /, ""))
-    .filter((data) => data !== "[DONE]")
-    .map((data) => JSON.parse(data) as OpenAIChatCompletionChunk);
-}
 
 describe("buildPrompt", () => {
   test("orders system messages, the tool prompt, transcript, tool result, and continue turn", () => {
@@ -135,99 +115,9 @@ describe("buildPrompt", () => {
   });
 });
 
-describe("toOpenAIChunks", () => {
-  test("emits content, reasoning_content, and tool_calls with finish_reason tool_calls", () => {
-    const calls: ParsedToolCall[] = [
-      { id: "call-1", name: "read", arguments: '{"path":"/tmp/x"}' },
-    ];
 
-    const body = toOpenAIChunks("Done.", "Thinking...", calls);
-    const chunks = parseChunks(body);
 
-    expect(chunks.length).toBeGreaterThan(0);
-    for (const chunk of chunks) {
-      expect(chunk.object).toBe("chat.completion.chunk");
-      expect(chunk.model).toBe("deepseek-web");
-      expect(chunk.choices).toHaveLength(1);
-      expect(chunk.choices[0]?.index).toBe(0);
-    }
 
-    const deltas = chunks.map((chunk) => chunk.choices[0]!.delta);
-    expect(
-      deltas
-        .map((delta) => delta.content ?? "")
-        .filter((content) => content.length > 0)
-        .join(""),
-    ).toBe("Done.");
-    expect(
-      deltas
-        .map((delta) => delta.reasoning_content ?? "")
-        .filter((thinking) => thinking.length > 0)
-        .join(""),
-    ).toBe("Thinking...");
-
-    const toolDeltas = deltas.flatMap((delta) => delta.tool_calls ?? []);
-    expect(toolDeltas).toHaveLength(1);
-    expect(toolDeltas[0]).toEqual({
-      index: 0,
-      id: "call-1",
-      type: "function",
-      function: { name: "read", arguments: '{"path":"/tmp/x"}' },
-    });
-
-    const finishes = chunks
-      .map((chunk) => chunk.choices[0]!.finish_reason)
-      .filter((reason) => reason !== null);
-    expect(finishes).toEqual(["tool_calls"]);
-    expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
-  });
-
-  test("finishes with stop when there are no tool calls", () => {
-    const chunks = parseChunks(toOpenAIChunks("Hello", "", []));
-
-    const finishes = chunks
-      .map((chunk) => chunk.choices[0]!.finish_reason)
-      .filter((reason) => reason !== null);
-    expect(finishes).toEqual(["stop"]);
-    expect(chunks.some((chunk) => (chunk.choices[0]!.delta.tool_calls ?? []).length > 0)).toBe(
-      false,
-    );
-  });
-});
-
-describe("toOpenAICompletion", () => {
-  test("builds a non-streaming completion with tool calls", () => {
-    const completion = toOpenAICompletion("", "planning", [
-      { id: "call-1", name: "read", arguments: '{"path":"/tmp/x"}' },
-    ]);
-
-    expect(completion.object).toBe("chat.completion");
-    expect(completion.model).toBe("deepseek-web");
-    expect(completion.choices[0]?.finish_reason).toBe("tool_calls");
-    expect(completion.choices[0]?.message).toEqual({
-      role: "assistant",
-      content: null,
-      reasoning_content: "planning",
-      tool_calls: [
-        {
-          id: "call-1",
-          type: "function",
-          function: { name: "read", arguments: '{"path":"/tmp/x"}' },
-        },
-      ],
-    });
-  });
-
-  test("builds a plain text completion", () => {
-    const completion = toOpenAICompletion("Hi there", "", []);
-
-    expect(completion.choices[0]?.message).toEqual({
-      role: "assistant",
-      content: "Hi there",
-    });
-    expect(completion.choices[0]?.finish_reason).toBe("stop");
-  });
-});
 
 describe("stripToolMarkup", () => {
   test("removes a DSML tool_calls block and keeps the surrounding prose", () => {

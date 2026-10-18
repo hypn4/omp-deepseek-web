@@ -20,6 +20,7 @@ export interface BufferedCompletion {
 export interface EventSink {
   push(event: AssistantMessageEvent): void;
   end(message?: AssistantMessage): void;
+  fail(error: unknown): void;
 }
 
 function emptyUsage(): Usage {
@@ -31,6 +32,18 @@ function emptyUsage(): Usage {
     totalTokens: 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
+}
+
+function parseArguments(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // DeepSeek produced malformed JSON; expose an empty call rather than crash.
+  }
+  return {};
 }
 
 /**
@@ -86,15 +99,16 @@ export function emitBufferedCompletion(
   }
 
   for (const call of completion.toolCalls) {
+    const argumentsObject = parseArguments(call.arguments);
     const toolCall = {
       type: "toolCall" as const,
       id: call.id,
       name: call.name,
-      arguments: call.arguments,
+      arguments: argumentsObject,
     };
     blocks.push(toolCall);
     const contentIndex = blocks.length - 1;
-    const serialized = JSON.stringify(toolCall.arguments);
+    const serialized = JSON.stringify(argumentsObject);
     stream.push({ type: "toolcall_start", contentIndex, partial });
     stream.push({
       type: "toolcall_delta",

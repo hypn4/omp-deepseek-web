@@ -1,26 +1,39 @@
 # deepseek-web
 
-An OpenAI-compatible proxy that exposes a free `chat.deepseek.com` web account to
-[omp](https://github.com/can1357/oh-my-pi) as a custom provider:
+Use a free `chat.deepseek.com` web account as an [omp](https://github.com/can1357/oh-my-pi)
+provider without running a local proxy.
 
+```mermaid
+flowchart LR
+  A[chat.deepseek.com] --> B[Chrome extension]
+  B --> C[native messaging host]
+  C --> D[token files 0600]
+  E[omp session] --> F[deepseek-web omp extension]
+  F --> D
+  F --> G[DeepSeek web API]
+  F --> H[omp tools]
 ```
-omp  ──/v1/chat/completions──▶  127.0.0.1:8787  ──web API + PoW──▶  chat.deepseek.com
-     ◀──content / tool_calls──                ◀──SSE patches──
-```
 
-The proxy converts DeepSeek's SSE stream to OpenAI Chat Completions chunks and
-bridges text-format tool calls (DSML and V3.1) to OpenAI `tool_calls`, so omp can
-run `read`, `edit`, `bash`, and the rest of its tools.
+- `omp-extension/` registers a command-backed `deepseek-web` provider. It calls
+  the DeepSeek web API in-process and bridges DSML/V3.1 text tool calls to omp's
+  `read`, `edit`, `bash`, and other tools.
+- `extension/` is a Chrome MV3 extension. It reads `localStorage.userToken` and
+  `deepseek-device-id:chat`, then sends them to a native messaging host.
+- `extension/native-host/` writes `~/.omp/agent/deepseek-web-token` and
+  `~/.omp/agent/.deepseek-web-device-id` with mode `0600`. There is no HTTP
+  listener and no proxy process.
 
-The DeepSeek web API is **unofficial and may change without notice**. Treat this
-as a personal convenience, not a supported API.
+The DeepSeek web API is **unofficial and may change without notice**. Use your
+own account and treat this as a personal convenience, not a supported API.
 
 ## Requirements
 
 - [Bun](https://bun.sh) 1.x (the only runtime; there are no npm dependencies)
 - `omp` 18.x
-- A free DeepSeek chat account that can sign in with Google
-- Chrome or another Chromium browser for the token-bridge extension
+- A free DeepSeek chat account
+- Chrome or another Chromium browser
+
+The native host installer currently writes macOS Chrome-family paths.
 
 ## Install
 
@@ -30,161 +43,119 @@ cd deepseek-web
 bun install
 ```
 
-There are no runtime dependencies: the proxy uses Bun built-ins (`fetch`,
-`crypto`, `WebAssembly`). `bun install` creates/validates the lockfile and is
-safe to run for consistency.
+There are no runtime dependencies: the provider uses Bun built-ins (`fetch`,
+`crypto`, `WebAssembly`) and omp's host packages.
 
-## Log in
+### 1. Install the Chrome bridge
 
-The login path is a small Chrome extension. It reads the token that the DeepSeek
-web app already stores in `localStorage.userToken` and posts it to the local
-proxy. There is no Google OAuth redirect, custom URL scheme, or CDP.
-
-1. Start the proxy:
-
-   ```bash
-   bun run start
-   ```
-
-2. Load the extension: open `chrome://extensions`, enable **Developer mode**,
-   click **Load unpacked**, and select the `extension/` directory.
-
-3. Open <https://chat.deepseek.com> and sign in normally.
-
-4. The content script sends `localStorage.userToken` and
-   `deepseek-device-id:chat` to `http://127.0.0.1:8787/login/token` through the
-   extension's background worker. The proxy writes the token to
-   `~/.omp/agent/deepseek-web-token` with mode `0600`.
-
-5. Verify:
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select the `extension/` directory.
+4. Copy the extension ID from its card.
+5. Install the native host:
 
    ```bash
-   curl -s http://127.0.0.1:8787/login/status
-   # {"hasToken":true}
+   bun extension/install.ts --extension-id <extension-id>
    ```
 
-The content script polls every 5 seconds and re-sends when the token changes, or
-every 30 seconds as a heartbeat. If the web app rotates the token, the proxy is
-updated automatically. If the token check fails, reload the extension or start
-the proxy again.
+   Use `--browser chromium|edge|brave` if needed.
+6. Reload the extension (or restart Chrome).
+7. Open <https://chat.deepseek.com> and sign in normally.
 
-The extension only sends the token to loopback and never logs it. The proxy never
-logs the token, prompt, or `Authorization` header.
+The content script polls every 5 seconds and sends the token only when it
+changes. A failed send retries on the next tick. The host writes the files
+atomically with owner-only permissions.
 
-## Start the proxy
-
-```bash
-bun run start
-```
-
-It listens on `http://127.0.0.1:8787` only. The proxy uses the stored token for
-DeepSeek; omp's `apiKey` is a dummy value. Do not open the port to the network.
-
-Quick check:
+Verify the files exist without printing the token:
 
 ```bash
-curl -s http://127.0.0.1:8787/v1/models
-curl -s http://127.0.0.1:8787/login/status
+test -s ~/.omp/agent/deepseek-web-token && echo token-present
+test -s ~/.omp/agent/.deepseek-web-device-id && echo device-present
 ```
 
-## Configure omp
+### 2. Load the omp extension
 
-Copy the block from [`models.example.yml`](./models.example.yml) into
-`~/.omp/agent/models.yml` (merge it under the existing `providers:` key; do not
-replace that file's other providers):
+Add the absolute path to `~/.omp/agent/config.yml`:
 
 ```yaml
-providers:
-  deepseek-web:
-    baseUrl: http://127.0.0.1:8787/v1
-    api: openai-completions
-    apiKey: local
-    authHeader: true
-    models:
-      - id: deepseek-web
-        name: DeepSeek Web (free)
-        reasoning: false
-        input: [text]
-        supportsTools: true
-        contextWindow: 128000
-        maxTokens: 8192
-        compat:
-          supportsToolChoice: false
-          supportsStrictMode: false
-          supportsDeveloperRole: false
+extensions:
+  - /absolute/path/to/deepseek-web/omp-extension/index.ts
 ```
 
-`models.example.yml` is not an active models file, so `omp models find deepseek-web`
-finds nothing until you copy the block into the active file.
-
-`apiKey: local` is a dummy credential so omp selects the provider. The proxy
-ignores it: when `~/.omp/agent/deepseek-web-token` exists, that token is used for
-DeepSeek.
-
-Verify:
+`extensions` replaces the array from lower-precedence settings, so keep any
+existing entries in the same list. Alternatively load it per session:
 
 ```bash
-omp models find deepseek-web
+omp -e /absolute/path/to/deepseek-web/omp-extension/index.ts \
+  --model deepseek-web/deepseek-web
+```
+
+No `models.yml` provider entry is needed; the extension registers
+`deepseek-web/deepseek-web` itself.
+
+### 3. Run
+
+```bash
 omp --model deepseek-web/deepseek-web
 ```
 
-Then try "Read package.json and summarize it": the `read` tool card should appear
-and the model should produce a summary. If the model answers without calling a
-tool, see limitations below.
+To make it the default, set it in `~/.omp/agent/config.yml`:
+
+```yaml
+modelRoles:
+  default: deepseek-web/deepseek-web
+```
+
+Quick non-interactive check:
+
+```bash
+omp --no-extensions \
+  -e /absolute/path/to/deepseek-web/omp-extension/index.ts \
+  --model deepseek-web/deepseek-web \
+  -p "Reply with exactly: OK"
+```
+
+Then try "Read README.md and summarize the first section". The `read` tool card
+should appear and the model should produce a summary.
 
 ## Configuration
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `DEEPSEEK_WEB_PORT` | `8787` | Proxy port |
-| `DEEPSEEK_WEB_BASE_URL` | `https://chat.deepseek.com` | Upstream web API base URL |
-| `DEEPSEEK_WEB_DEVICE_ID` | extension value | Stable `x-device-id`; usually written by the extension |
-| `DEEPSEEK_WEB_THINKING` | `0` | `1` enables DeepThink for requests without tools |
-| `DEEPSEEK_WEB_SEARCH` | `0` | `1` enables web search |
-| `DEEPSEEK_WEB_MAX_PROMPT_CHARS` | `400000` | Prompt length cap |
-| `DEEPSEEK_WEB_LOG_LEVEL` | `info` | `debug` adds stream-error detail; prompts and tokens are never logged |
-| `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced: command whose stdout is a fresh token after a 401 |
+The provider currently uses:
 
-If you change `DEEPSEEK_WEB_PORT`, update `PROXY_URL` in
-`extension/background.js` and the loopback host permission in
-`extension/manifest.json` to match. They are intentionally fixed to the default
-port.
+- Base URL: `https://chat.deepseek.com`
+- Thinking: off (tool calls require thinking off)
+- Web search: off
+- Inputs: text only
+- Model metadata: 128k context, 8k output (estimates)
 
-The token and device id are stored in `~/.omp/agent/deepseek-web-token` and
-`~/.omp/agent/.deepseek-web-device-id` with mode `0600`. The proxy reads them at
-startup and after every extension POST.
+`DEEPSEEK_WEB_TOKEN_CMD` is an optional advanced fallback. When a request gets
+`40003 INVALID_TOKEN`, the client can run the command and use its stdout as the
+new token. The Chrome bridge normally updates the token first.
+
+To remove the native host:
+
+```bash
+bun extension/install.ts --uninstall
+```
 
 ## Known limitations
 
-- **Sampling parameters are ignored.** The web API accepts no `temperature`,
-  `top_p`, `max_tokens`, `stop`, or `tool_choice`. Requests still succeed, but
-  those fields have no effect.
-- **Tool-call format risk.** DeepSeek web has no native tool calling. The proxy
-  prompts the model to emit DSML (with a V3.1 fallback parser); the hidden web
-  system prompt or a model update can break that convention. Malformed blocks are
-  returned as text rather than fabricated `tool_calls`. Tool calling only works
-  with thinking disabled.
 - **Unofficial protocol and ToS.** Automated use of free web chat may violate
   DeepSeek's terms or hit rate limits, and endpoints/PoW may change at any time.
   Use at your own risk and with your own account.
-- **Loopback only.** The proxy binds `127.0.0.1`. Every completion request must
-  carry a bearer token, but the proxy uses the stored token; anyone who can reach
-  the port can spend your account quota. Never expose it through a tunnel or
-  reverse proxy.
-- **No token logging.** Tokens are bearer credentials; the proxy never logs the
-  `Authorization` header, prompt text, or token values, including at `debug` level.
-- **Extension dependency.** The token is read from the web app's
-  `localStorage.userToken` key. If DeepSeek changes that key or the page storage
-  layout, update `extension/content.js`. The proxy stores one token; there is no
+- **Buffered streaming.** The provider collects the full upstream response before
+  emitting omp events; text does not appear incrementally.
+- **Text only.** Images are rejected; the model metadata advertises text input.
+- **Tool-call format risk.** DeepSeek web has no native tool calling. The provider
+  prompts for DSML (with a V3.1 fallback parser). A hidden prompt or model update
+  can break the convention; malformed blocks remain ordinary text.
+- **Single account.** One token and one device id are stored. There is no
   multi-account rotation.
-- **Streaming is buffered.** The proxy collects the full upstream response before
-  emitting chunks; tokens do not appear incrementally. `stream: false` is also
-  supported.
-- **Usage is not reported.** The proxy emits no OpenAI `usage` object;
-  `contextWindow: 128000` is an estimate.
-- **Single account.** The proxy checks `auth_token/check_device` on auth errors and
-  adopts a rotated token when DeepSeek supplies one; the extension also re-posts
-  a token when the web app rotates it. There is no multi-account rotation.
+- **No usage reporting.** omp sees zero cost/usage; the 128k context window is an
+  estimate, not a measured limit.
+- **Native host dependency.** The token is read from `localStorage.userToken`.
+  If DeepSeek changes that key or the page storage layout, update
+  `extension/content.js`. If the repository moves, rerun the installer.
 
 ## Vendored PoW solver
 
@@ -195,6 +166,6 @@ challenge.
 - Size: 26,612 bytes
 - SHA-256: `b3fca8cc072c1defbd60c02266a8e48bd307a1804aaff4314900aea720e72f7d`
 
-The file is checked in because the proxy loads it from disk at startup instead of
+The file is checked in because the provider loads it from disk instead of
 fetching it at runtime. If DeepSeek rotates the asset, verify the new file's hash
 and update this section.
