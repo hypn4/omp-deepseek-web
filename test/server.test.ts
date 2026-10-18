@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../src/config";
 import { startServer } from "../src/server";
 import type { CompletionClient, ServerConfig } from "../src/config";
 import type { DeepSeekCompletionRequest } from "../src/deepseek/types";
@@ -417,12 +416,7 @@ describe("POST /v1/chat/completions", () => {
 
   test("returns 413 when the prompt exceeds DEEPSEEK_WEB_MAX_PROMPT_CHARS", async () => {
     const fake = createFake({ text: "never used" });
-    const config = loadConfig({
-      DEEPSEEK_WEB_MAX_PROMPT_CHARS: "20",
-      DEEPSEEK_WEB_PORT: "0",
-      DEEPSEEK_WEB_DEVICE_ID: "device-test",
-    });
-    const { baseUrl, state } = start(fake, config);
+    const { baseUrl, state } = start(fake, { maxPromptChars: 20 });
 
     const response = await postCompletion(baseUrl, {
       model: "deepseek-web",
