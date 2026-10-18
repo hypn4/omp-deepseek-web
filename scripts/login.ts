@@ -11,6 +11,7 @@ import {
 } from "../src/login/oauth";
 
 export const TOKEN_ENV_KEY = "DEEPSEEK_WEB_TOKEN";
+export const DEVICE_ID_ENV_KEY = "DEEPSEEK_WEB_DEVICE_ID";
 export const DEFAULT_ENV_PATH = join(homedir(), ".omp", "agent", ".env");
 export const DEFAULT_DEVICE_ID_PATH = join(
   homedir(),
@@ -70,12 +71,12 @@ export function parseArgs(argv: string[]): LoginOptions {
   return options;
 }
 
-/** Upserts `DEEPSEEK_WEB_TOKEN`, preserving other lines and mode 0600. */
-export async function writeEnvToken(path: string, token: string): Promise<void> {
-  if (token === "" || token.trim() !== token || /[\r\n]/.test(token)) {
-    throw new LoginError("Refusing to write an invalid token");
-  }
-
+/** Upserts the token and its device id, preserving other lines and mode 0600. */
+export async function writeEnvConfig(
+  path: string,
+  token: string,
+  deviceId: string,
+): Promise<void> {
   let existing = "";
   try {
     existing = await readFile(path, "utf8");
@@ -89,14 +90,23 @@ export async function writeEnvToken(path: string, token: string): Promise<void> 
     }
   }
 
-  const line = `${TOKEN_ENV_KEY}=${token}`;
-  const entry = new RegExp(`^${TOKEN_ENV_KEY}=.*$`, "m");
-  let content: string;
-  if (entry.test(existing)) {
-    content = existing.replace(entry, line);
-  } else {
-    const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
-    content = `${existing}${separator}${line}\n`;
+  const entries: Array<[string, string]> = [
+    [TOKEN_ENV_KEY, token],
+    [DEVICE_ID_ENV_KEY, deviceId],
+  ];
+  let content = existing;
+  for (const [key, value] of entries) {
+    if (value === "" || value.trim() !== value || /[\r\n]/.test(value)) {
+      throw new LoginError(`Refusing to write an invalid value for ${key}`);
+    }
+    const line = `${key}=${value}`;
+    const entry = new RegExp(`^${key}=.*$`, "m");
+    if (entry.test(content)) {
+      content = content.replace(entry, line);
+    } else {
+      const separator = content === "" || content.endsWith("\n") ? "" : "\n";
+      content = `${content}${separator}${line}\n`;
+    }
   }
   if (!content.endsWith("\n")) {
     content += "\n";
@@ -164,8 +174,10 @@ export async function main(argv: string[]): Promise<void> {
   const token = await exchangeNonce(deviceId, nonce);
 
   if (options.writeEnv) {
-    await writeEnvToken(DEFAULT_ENV_PATH, token);
-    console.error(`Wrote ${TOKEN_ENV_KEY} to ${DEFAULT_ENV_PATH}.`);
+    await writeEnvConfig(DEFAULT_ENV_PATH, token, deviceId);
+    console.error(
+      `Wrote ${TOKEN_ENV_KEY} and ${DEVICE_ID_ENV_KEY} to ${DEFAULT_ENV_PATH}.`,
+    );
   }
   if (options.printToken) {
     process.stdout.write(`${token}\n`);

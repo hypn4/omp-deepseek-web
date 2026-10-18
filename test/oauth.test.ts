@@ -16,7 +16,7 @@ import {
   exchangeNonce,
   parseOAuthRedirect,
 } from "../src/login/oauth";
-import { parseArgs, writeEnvToken } from "../scripts/login";
+import { parseArgs, writeEnvConfig } from "../scripts/login";
 
 interface FetchCall {
   url: string;
@@ -231,17 +231,21 @@ describe("login CLI helpers", () => {
     );
   });
 
-  test("writes the token into .env with mode 0600 and preserves other keys", async () => {
+  test("writes the token and device id into .env with mode 0600", async () => {
     const dir = mkdtempSync(join(tmpdir(), "deepseek-web-env-"));
     const path = join(dir, "agent", ".env");
     try {
       mkdirSync(join(dir, "agent"), { recursive: true });
-      writeFileSync(path, "OTHER=1\nDEEPSEEK_WEB_TOKEN=old\n", { mode: 0o644 });
+      writeFileSync(
+        path,
+        "OTHER=1\nDEEPSEEK_WEB_TOKEN=old\nDEEPSEEK_WEB_DEVICE_ID=old-device\n",
+        { mode: 0o644 },
+      );
 
-      await writeEnvToken(path, "new-token");
+      await writeEnvConfig(path, "new-token", "device-1");
 
       expect(readFileSync(path, "utf8")).toBe(
-        "OTHER=1\nDEEPSEEK_WEB_TOKEN=new-token\n",
+        "OTHER=1\nDEEPSEEK_WEB_TOKEN=new-token\nDEEPSEEK_WEB_DEVICE_ID=device-1\n",
       );
       expect(statSync(path).mode & 0o777).toBe(0o600);
     } finally {
@@ -249,14 +253,14 @@ describe("login CLI helpers", () => {
     }
   });
 
-  test("creates a missing .env with mode 0600", async () => {
+  test("creates a missing .env with both keys and mode 0600", async () => {
     const dir = mkdtempSync(join(tmpdir(), "deepseek-web-env-"));
     const path = join(dir, "agent", ".env");
     try {
-      await writeEnvToken(path, "fresh-token");
+      await writeEnvConfig(path, "fresh-token", "device-2");
 
       expect(readFileSync(path, "utf8")).toBe(
-        "DEEPSEEK_WEB_TOKEN=fresh-token\n",
+        "DEEPSEEK_WEB_TOKEN=fresh-token\nDEEPSEEK_WEB_DEVICE_ID=device-2\n",
       );
       expect(statSync(path).mode & 0o777).toBe(0o600);
     } finally {
