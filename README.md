@@ -58,7 +58,7 @@ flowchart LR
 Clone the repository and verify the test suite:
 
 ```bash
-git clone <your-repository-url> deepseek-web
+git clone https://github.com/hypn4/deepseek-web.git deepseek-web
 cd deepseek-web
 bun install
 bun test
@@ -97,22 +97,25 @@ popup.
 
 ### 2. Install the omp provider
 
-The recommended path is to install this repository as an omp plugin. From a
-local clone:
+**Recommended:** install the published GitHub repository as an omp plugin:
+
+```bash
+omp plugin install github:hypn4/deepseek-web
+```
+
+This is the primary installation path. The plugin manifest loads
+`omp-extension/index.ts`, so no `models.yml` entry or manual `extensions:` edit
+is required. Manage it with `omp plugin list`, `omp plugin upgrade deepseek-web`,
+`omp plugin disable deepseek-web`, or `omp plugin uninstall deepseek-web`.
+
+For local development from a clone, use `plugin link` instead:
 
 ```bash
 omp plugin link /path/to/deepseek-web
 ```
 
-From a published GitHub repository:
-
-```bash
-omp plugin install github:<owner>/deepseek-web
-```
-
-The plugin manifest loads `omp-extension/index.ts`, so no `models.yml` entry or
-manual `extensions:` edit is required. Manage it with `omp plugin list`,
-`omp plugin disable deepseek-web`, or `omp plugin uninstall deepseek-web`.
+`link` symlinks the working tree and is intended for development; normal users
+should use `omp plugin install`.
 
 For one-off development, load the extension explicitly instead:
 
