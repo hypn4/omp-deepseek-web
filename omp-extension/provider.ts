@@ -40,15 +40,23 @@ function tokenError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+export interface ProviderTurnOptions {
+  signal?: AbortSignal;
+  /** DeepThink; enabled by default. */
+  thinkingEnabled?: boolean;
+  /** Web search; enabled by default. */
+  searchEnabled?: boolean;
+}
+
 /**
- * Runs one DeepSeek web turn and emits canonical omp events. The web model
- * cannot use thinking while tools are enabled, so thinking stays disabled.
+ * Runs one DeepSeek web turn and emits canonical omp events. Thinking and
+ * search default on; set the corresponding option to false to disable them.
  */
 export async function runDeepSeekTurn(
   deps: ProviderDeps,
   model: ModelIdentity,
   context: PromptContext,
-  options: { signal?: AbortSignal },
+  options: ProviderTurnOptions,
   stream: EventSink,
 ): Promise<void> {
   const token = deps.readToken();
@@ -82,6 +90,9 @@ export async function runDeepSeekTurn(
   let client: DeepSeekClientLike | null = null;
   let sessionId: string | null = null;
   const signal = options.signal ?? new AbortController().signal;
+  // DeepSeek web only emits tool calls with thinking disabled. Search is
+  // independent and stays on by default.
+  const hasTools = (context.tools?.length ?? 0) > 0;
 
   try {
     client = deps.createClient(token, deviceId);
@@ -90,8 +101,8 @@ export async function runDeepSeekTurn(
       {
         chatSessionId: sessionId,
         prompt,
-        thinkingEnabled: false,
-        searchEnabled: false,
+        thinkingEnabled: hasTools ? false : (options.thinkingEnabled ?? true),
+        searchEnabled: options.searchEnabled ?? true,
       },
       signal,
     );

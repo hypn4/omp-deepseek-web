@@ -123,8 +123,10 @@ should appear and the model should produce a summary.
 The provider currently uses:
 
 - Base URL: `https://chat.deepseek.com`
-- Thinking: off (tool calls require thinking off)
-- Web search: off
+- Thinking: on by default for tool-less turns. It is automatically disabled when
+  tools are present, because DeepSeek web only emits tool calls with thinking off.
+- Web search: on by default.
+- Set `DEEPSEEK_WEB_THINKING=0` or `DEEPSEEK_WEB_SEARCH=0` to disable either.
 - Inputs: text only
 - Model metadata: 128k context, 8k output (estimates)
 
@@ -148,7 +150,9 @@ bun extension/install.ts --uninstall
 - **Text only.** Images are rejected; the model metadata advertises text input.
 - **Tool-call format risk.** DeepSeek web has no native tool calling. The provider
   prompts for DSML (with a V3.1 fallback parser). A hidden prompt or model update
-  can break the convention; malformed blocks remain ordinary text.
+  can break the convention; malformed blocks remain ordinary text. Tool calling
+  requires thinking off, so the provider forces thinking off whenever tools are
+  present; this is why DeepThink and coding tools cannot be active together.
 - **Single account.** One token and one device id are stored. There is no
   multi-account rotation.
 - **No usage reporting.** omp sees zero cost/usage; the 128k context window is an

@@ -113,6 +113,21 @@ describe("DeepSeek omp provider", () => {
     expect(deleted).toEqual(["session-1"]);
   });
 
+  test("defaults thinking and search on", async () => {
+    let request: DeepSeekCompletionRequest | undefined;
+    await run(
+      providerDeps({
+        text: "hello",
+        onComplete: (value) => {
+          request = value;
+        },
+      }),
+    );
+
+    expect(request?.thinkingEnabled).toBe(true);
+    expect(request?.searchEnabled).toBe(true);
+  });
+
   test("parses a tool call and strips its markup", async () => {
     const toolMarkup = `<${PIPE}DSML${PIPE}tool_calls>\n<${PIPE}DSML${PIPE}invoke name="read">\n<${PIPE}DSML${PIPE}parameter name="path" string="true">/tmp/file</${PIPE}DSML${PIPE}parameter>\n</invoke>\n</tool_calls>`;
     let request: DeepSeekCompletionRequest | undefined;
@@ -131,6 +146,7 @@ describe("DeepSeek omp provider", () => {
 
     expect(sink.failure).toBeUndefined();
     expect(request?.thinkingEnabled).toBe(false);
+    expect(request?.searchEnabled).toBe(true);
     expect(sink.ended?.stopReason).toBe("toolUse");
     expect(sink.ended?.content).toEqual([
       { type: "text", text: "Reading." },

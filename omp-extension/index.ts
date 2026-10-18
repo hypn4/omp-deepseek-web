@@ -55,7 +55,7 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
       {
         id: MODEL_ID,
         name: "DeepSeek Web (free)",
-        reasoning: false,
+        reasoning: true,
         input: ["text"],
         supportsTools: true,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -81,7 +81,11 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
         },
         { api: model.api, provider: model.provider, id: model.id },
         context as unknown as PromptContext,
-        { signal: options?.signal },
+        {
+          signal: options?.signal,
+          thinkingEnabled: process.env.DEEPSEEK_WEB_THINKING !== "0",
+          searchEnabled: process.env.DEEPSEEK_WEB_SEARCH !== "0",
+        },
         stream,
       );
       return stream;
