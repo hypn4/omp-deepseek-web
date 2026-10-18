@@ -70,6 +70,9 @@ export async function runNativeCompletion(
     signal,
     onProgress,
   );
+  if (result.errorMessage !== undefined) {
+    throw new DeepSeekApiError(-1, result.errorMessage, 200);
+  }
   let text = result.text;
   let thinking = result.thinking;
 

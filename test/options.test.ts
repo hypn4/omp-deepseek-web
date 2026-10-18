@@ -20,9 +20,9 @@ describe("thinking resolution", () => {
 });
 
 describe("web context window", () => {
-  test("defaults to the Android client history/file limit", () => {
+  test("defaults to the verified native web API context limit", () => {
     expect(resolveContextWindow(undefined)).toBe(DEFAULT_WEB_CONTEXT_WINDOW);
-    expect(DEFAULT_WEB_CONTEXT_WINDOW).toBe(61_440);
+    expect(DEFAULT_WEB_CONTEXT_WINDOW).toBe(1_000_000);
   });
 
   test("accepts a positive integer override and rejects invalid values", () => {

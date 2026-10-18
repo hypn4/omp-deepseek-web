@@ -13,8 +13,12 @@ export interface DeepSeekSseResult {
   incompleteMessage?: string;
   /** Native `has_pending_fragment` flag. */
   hasPendingFragment?: boolean;
-  /** Native finish reason from a hint fragment. */
+  /** Native finish reason from a hint fragment or a top-level hint. */
   finishReason?: string;
+  /** Error text from an `event: hint` payload. */
+  errorMessage?: string;
+  /** Hint type, normally `error`. */
+  errorType?: string;
   /** Current web-search phase reported by the web API, when present. */
   searchStatus?: string;
 }
@@ -171,6 +175,23 @@ export class DeepSeekSseParser {
       searchStatus = text.length > 0 ? "composing" : "searching";
     }
 
+    const rawTopFinish = this.#get("finish_reason");
+    if (
+      finishReason === undefined &&
+      typeof rawTopFinish === "string" &&
+      rawTopFinish !== ""
+    ) {
+      finishReason = rawTopFinish;
+    }
+    const rawHintType = this.#get("type");
+    const rawHintContent = this.#get("content");
+    const errorType =
+      rawHintType === "error" ? "error" : undefined;
+    const errorMessage =
+      errorType === "error" && typeof rawHintContent === "string"
+        ? rawHintContent
+        : undefined;
+
     const rawMessageId = this.#get("response_message_id");
     const messageId =
       typeof rawMessageId === "number" && Number.isFinite(rawMessageId)
@@ -185,6 +206,8 @@ export class DeepSeekSseParser {
       ...(incompleteMessage === undefined ? {} : { incompleteMessage }),
       ...(hasPendingFragment === undefined ? {} : { hasPendingFragment }),
       ...(finishReason === undefined ? {} : { finishReason }),
+      ...(errorMessage === undefined ? {} : { errorMessage }),
+      ...(errorType === undefined ? {} : { errorType }),
       ...(searchStatus === undefined ? {} : { searchStatus }),
     };
   }

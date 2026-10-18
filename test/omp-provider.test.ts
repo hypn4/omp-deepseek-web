@@ -45,6 +45,8 @@ interface ScriptedResponse {
   incompleteMessage?: string;
   finishReason?: string;
   hasPendingFragment?: boolean;
+  errorMessage?: string;
+  errorType?: string;
 }
 
 function sseBody(
@@ -62,6 +64,14 @@ function sseBody(
   if (options.finishReason !== undefined) {
     fragments.push({ type: "HINT", finish_reason: options.finishReason });
   }
+  const hint =
+    options.errorMessage === undefined
+      ? ""
+      : `event: hint\ndata: ${JSON.stringify({
+          type: options.errorType ?? "error",
+          content: options.errorMessage,
+          finish_reason: options.finishReason,
+        })}\n\n`;
   const response = {
     fragments,
     ...(options.incompleteMessage === undefined
@@ -78,6 +88,7 @@ function sseBody(
   const body =
     ready +
     `data: ${JSON.stringify({ v: { response } })}\n\n` +
+    hint +
     (options.finished === false
       ? ""
       : 'data: {"p":"response/status","o":"SET","v":"FINISHED"}\n\n');
@@ -328,6 +339,24 @@ describe("DeepSeek omp provider", () => {
       { type: "text", text: "part one part two part three" },
     ]);
     expect(sink.ended?.stopReason).toBe("length");
+  });
+
+  test("surfaces a native context-length hint as an error", async () => {
+    const sink = await run(
+      providerDeps({
+        responses: [
+          {
+            text: "",
+            messageId: 2,
+            finishReason: "context_length_exceeded",
+            errorMessage: "Length limit reached. Please start a new chat.",
+          },
+        ],
+      }),
+    );
+
+    expect(sink.failure).toBeInstanceOf(DeepSeekApiError);
+    expect(String(sink.failure)).toContain("Length limit reached");
   });
 
   test("fails when an incomplete answer has no message id", async () => {

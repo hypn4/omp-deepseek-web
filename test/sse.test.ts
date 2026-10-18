@@ -150,6 +150,30 @@ describe("DeepSeekSseParser", () => {
     });
   });
 
+  test("extracts context_length_exceeded hint errors", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      [
+        'event: ready',
+        'data: {"request_message_id":1,"response_message_id":2}',
+        '',
+        'event: hint',
+        'data: {"type":"error","content":"Length limit reached. Please start a new chat.","clear_response":true,"finish_reason":"context_length_exceeded"}',
+        '',
+        'event: close',
+        'data: {"click_behavior":"none","auto_resume":false}',
+        '',
+      ].join("\n"),
+    );
+
+    expect(parser.result()).toMatchObject({
+      finished: true,
+      finishReason: "context_length_exceeded",
+      errorType: "error",
+      errorMessage: "Length limit reached. Please start a new chat.",
+    });
+  });
+
   test("extracts native incomplete and finish metadata", () => {
     const parser = new DeepSeekSseParser();
     parser.feed(

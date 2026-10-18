@@ -10,7 +10,7 @@ export function resolveThinkingEnabled(setting: string | undefined): boolean {
 }
 
 /** Android/web client default for `normal_history_and_file_token_limit`. */
-export const DEFAULT_WEB_CONTEXT_WINDOW = 61_440;
+export const DEFAULT_WEB_CONTEXT_WINDOW = 1_000_000;
 
 /** Uses a conservative web-client limit unless explicitly overridden. */
 export function resolveContextWindow(setting: string | undefined): number {
