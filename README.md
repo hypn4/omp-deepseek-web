@@ -224,6 +224,13 @@ challenge.
 - Size: 26,612 bytes
 - SHA-256: `b3fca8cc072c1defbd60c02266a8e48bd307a1804aaff4314900aea720e72f7d`
 
+## Trademarks
+
+This project is unofficial and is not affiliated with or endorsed by DeepSeek or
+Oh My Pi. DeepSeek, the DeepSeek whale logo, Oh My Pi, and Pi are trademarks of
+their respective owners. The MIT license covers the source code, not third-party
+marks or logo assets. See [NOTICE](./NOTICE).
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).

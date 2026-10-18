@@ -1,0 +1,13 @@
+# NOTICE
+
+This project is an unofficial client for `chat.deepseek.com`. It is not
+affiliated with, endorsed by, or sponsored by DeepSeek or Oh My Pi.
+
+"DeepSeek", the DeepSeek whale logo, "Oh My Pi", "Pi", and related names and
+logos are trademarks or registered trademarks of their respective owners.
+
+The MIT License in [LICENSE](./LICENSE) applies to the source code in this
+repository. It does not grant any rights to third-party trademarks, logos, or
+other brand assets. The image assets under `assets/` and `extension/icons/`
+incorporate third-party marks and are included only to identify the integration.
+Remove or replace them if you do not have the right to use those marks.

@@ -62,6 +62,9 @@ value.
 - Source assets: `assets/deepseek-whale-pi-color.png` and
   `assets/deepseek-whale-pi-mono.png`.
 
+The DeepSeek and Pi marks belong to their respective owners. See the repository
+[NOTICE](../NOTICE) for the trademark disclaimer.
+
 ## Permissions
 
 - `nativeMessaging` — send the token to the local host.
