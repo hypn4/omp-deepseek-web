@@ -6,6 +6,7 @@ import type {
   DeepSeekContinueRequest,
   DeepSeekResumeRequest,
 } from "./types";
+import { RequestGate } from "./rate-limit";
 import { mergeContinuation } from "./stream-merge";
 
 export interface NativeCompletionTransport {
@@ -21,6 +22,8 @@ export interface NativeCompletionTransport {
     request: DeepSeekResumeRequest,
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>>;
+  /** Latest response header delay, when the provider advertises one. */
+  retryAfterMs?(): number | undefined;
 }
 
 export type NativeCompletionProgress = (result: DeepSeekSseResult) => void;
@@ -31,6 +34,8 @@ export interface NativeCompletionOptions {
   rateLimitRetries?: number;
   /** Initial backoff delay; doubles per retry. */
   rateLimitDelayMs?: number;
+  /** Shared pacing gate for this process/account. */
+  gate?: RequestGate;
 }
 
 const MAX_NATIVE_RECOVERIES = 2;
@@ -78,29 +83,6 @@ function hasVisibleContent(result: DeepSeekSseResult): boolean {
   return result.text.length > 0 || result.thinking.length > 0;
 }
 
-async function waitForRetry(
-  milliseconds: number,
-  signal: AbortSignal,
-): Promise<void> {
-  if (milliseconds <= 0) {
-    return;
-  }
-  if (signal.aborted) {
-    throw signal.reason ?? new Error("aborted");
-  }
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  const timer = setTimeout(() => {
-    signal.removeEventListener("abort", onAbort);
-    resolve();
-  }, milliseconds);
-  const onAbort = (): void => {
-    clearTimeout(timer);
-    reject(signal.reason ?? new Error("aborted"));
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
-  await promise;
-}
-
 /**
  * Runs a completion and follows only native recovery paths. There is no
  * model-free text fallback: if the server does not provide a recoverable
@@ -122,11 +104,13 @@ export async function runNativeCompletion(
     0,
     Math.trunc(options.rateLimitDelayMs ?? 5_000),
   );
+  const gate = options.gate ?? new RequestGate();
   const collect = async (
     makeStream: () => Promise<ReadableStream<Uint8Array>>,
     progress?: NativeCompletionProgress,
   ): Promise<DeepSeekSseResult> => {
     for (let attempt = 0; ; attempt += 1) {
+      await gate.wait(signal);
       const next = await collectCompletion(
         await makeStream(),
         signal,
@@ -139,11 +123,16 @@ export async function runNativeCompletion(
         return next;
       }
       const message = next.errorMessage ?? "DeepSeek rate limit reached";
+      const advertisedDelay = transport.retryAfterMs?.();
+      const delayMs =
+        advertisedDelay !== undefined && advertisedDelay >= 0
+          ? advertisedDelay
+          : rateLimitDelayMs * 2 ** attempt;
+      gate.cooldown(delayMs);
       if (hasVisibleContent(next) || attempt >= maxRateLimitRetries) {
         throw new DeepSeekApiError(-1, message, 429);
       }
       onRecovery?.("rate-limit");
-      await waitForRetry(rateLimitDelayMs * 2 ** attempt, signal);
     }
   };
 

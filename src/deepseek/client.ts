@@ -1,4 +1,5 @@
 import { PowError, solvePow } from "./pow";
+import { retryAfterFromHeaders } from "./rate-limit";
 import type {
   DeepSeekCompletionRequest,
   DeepSeekConfig,
@@ -95,6 +96,7 @@ export class DeepSeekClient {
   readonly #bundleId: string;
   readonly #deviceModel: string;
   readonly #tokenCommand: string | undefined;
+  #retryAfterMs: number | undefined;
 
   constructor(config: DeepSeekConfig) {
     this.#baseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -158,6 +160,11 @@ export class DeepSeekClient {
       );
     }
     return payload.data?.biz_data;
+  }
+
+  /** Retry delay advertised by the last response, when present. */
+  retryAfterMs(): number | undefined {
+    return this.#retryAfterMs;
   }
 
   /** Reads an error body and always throws the mapped error. */
@@ -424,6 +431,7 @@ export class DeepSeekClient {
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
     const response = await this.#request(path, { ...init, signal });
+    this.#retryAfterMs = retryAfterFromHeaders(response.headers);
     if (!response.ok) {
       await this.#throwResponseError(response);
     }

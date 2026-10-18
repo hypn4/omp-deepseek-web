@@ -10,6 +10,7 @@ import {
   runNativeCompletion,
 } from "../src/deepseek/native-turn";
 import { resolveNonNegativeInt } from "../src/deepseek/options";
+import type { RequestGate } from "../src/deepseek/rate-limit";
 import { stripToolMarkup } from "../src/openai/translate";
 import { parseToolCalls } from "../src/tools/parser";
 import type { EventSink, ModelIdentity } from "./events";
@@ -31,6 +32,7 @@ export interface DeepSeekClientLike {
     request: DeepSeekResumeRequest,
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>>;
+  retryAfterMs?(): number | undefined;
   deleteSession(sessionId: string): Promise<void>;
   uploadFile?(file: {
     data: Uint8Array;
@@ -46,6 +48,7 @@ export interface ProviderDeps {
   createClient(token: string, deviceId: string): DeepSeekClientLike;
   buildPrompt(context: PromptContext): string;
   onStatus?(status: string | null): void;
+  requestGate?: RequestGate;
 }
 
 function tokenError(error: unknown): Error {
@@ -225,8 +228,9 @@ export async function runDeepSeekTurn(
           options.rateLimitDelayMs ??
           resolveNonNegativeInt(
             process.env.DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS,
-            5_000,
+            10_000,
           ),
+        gate: deps.requestGate,
       },
     );
 

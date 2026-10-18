@@ -220,6 +220,21 @@ describe("DeepSeekClient", () => {
     expect(headers.get("x-device-model")).toBe("Pixel 7");
   });
 
+  test("captures Retry-After from the completion response", async () => {
+    installFetch(
+      jsonResponse(envelope({ challenge: POW_CHALLENGE })),
+      new Response('data: {"v":"hello"}\n\n', {
+        headers: {
+          "content-type": "text/event-stream",
+          "retry-after": "9",
+        },
+      }),
+    );
+    const client = makeClient();
+    await client.complete({ chatSessionId: "session-1", prompt: "hello" });
+    expect(client.retryAfterMs()).toBe(9000);
+  });
+
   test("checkDevice adopts the rotated token", async () => {
     const calls = installFetch(
       jsonResponse(envelope({ rotate: true, data: { token: "rotated-token" } })),

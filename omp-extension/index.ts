@@ -10,8 +10,10 @@ import {
 import { DeepSeekClient } from "../src/deepseek/client";
 import {
   resolveContextWindow,
+  resolveNonNegativeInt,
   resolveThinkingEnabled,
 } from "../src/deepseek/options";
+import { RequestGate } from "../src/deepseek/rate-limit";
 import type { PromptContext, PromptTool } from "./prompt";
 import { buildOmpPrompt } from "./prompt";
 import { runDeepSeekTurn } from "./provider";
@@ -41,6 +43,12 @@ function promptFor(context: PromptContext): string {
 }
 
 export default function deepseekWebExtension(pi: ExtensionAPI): void {
+  const requestGate = new RequestGate({
+    minIntervalMs: resolveNonNegativeInt(
+      process.env.DEEPSEEK_WEB_MIN_REQUEST_INTERVAL_MS,
+      1_000,
+    ),
+  });
   let activeContext: ExtensionContext | undefined;
   const setStatus = (status: string | null): void => {
     activeContext?.ui.setStatus("deepseek-web", status ?? undefined);
@@ -106,6 +114,7 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
             }),
           buildPrompt: promptFor,
           onStatus: setStatus,
+          requestGate,
         },
         { api: model.api, provider: model.provider, id: model.id },
         context as unknown as PromptContext,
