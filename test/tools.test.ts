@@ -263,6 +263,9 @@ describe("renderToolPrompt", () => {
     );
     expect(prompt).toContain("Rules:");
     expect(prompt).toContain(
+      "Every invoke must include all required parameters; never send an invoke with an empty body.",
+    );
+    expect(prompt).toContain(
       '`string="true"` keeps the value as a raw string; `string="false"` parses JSON.',
     );
     expect(prompt).toContain("Do not wrap the call in prose.");

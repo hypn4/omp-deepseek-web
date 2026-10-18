@@ -12,12 +12,24 @@ interface ContentMock {
   storage: Record<string, string>;
   sent: SentMessage[];
   tick(): void;
+  getMessageListener(): (
+    message: unknown,
+    sender: unknown,
+    sendResponse: (response: unknown) => void,
+  ) => boolean | undefined;
 }
 
 function loadContent(): ContentMock {
   const storage: Record<string, string> = {};
   const sent: SentMessage[] = [];
   let interval: (() => void) | undefined;
+  let messageListener:
+    | ((
+        message: unknown,
+        sender: unknown,
+        sendResponse: (response: unknown) => void,
+      ) => boolean | undefined)
+    | undefined;
 
   const localStorage = {
     getItem(key: string) {
@@ -28,6 +40,17 @@ function loadContent(): ContentMock {
   const chrome = {
     runtime: {
       lastError: undefined as { message?: string } | undefined,
+      onMessage: {
+        addListener(
+          listener: (
+            message: unknown,
+            sender: unknown,
+            sendResponse: (response: unknown) => void,
+          ) => boolean | undefined,
+        ) {
+          messageListener = listener;
+        },
+      },
       sendMessage(message: SentMessage["message"], callback: (response: unknown) => void) {
         sent.push({ message, callback });
       },
@@ -52,6 +75,12 @@ function loadContent(): ContentMock {
         throw new Error("content script did not install an interval");
       }
       interval();
+    },
+    getMessageListener() {
+      if (messageListener === undefined) {
+        throw new Error("content script did not register a message listener");
+      }
+      return messageListener;
     },
   };
 }
@@ -113,5 +142,23 @@ describe("extension content script", () => {
     mock.tick();
 
     expect(mock.sent.length).toBe(count + 1);
+  });
+
+  test("responds to a sync-now request", () => {
+    const mock = loadContent();
+    mock.storage.userToken = "stored-token";
+    const before = mock.sent.length;
+    let response: unknown;
+
+    mock.getMessageListener()(
+      { type: "deepseek-sync-now" },
+      {},
+      (value) => {
+        response = value;
+      },
+    );
+
+    expect(mock.sent.length).toBe(before + 1);
+    expect(response).toEqual({ ok: true });
   });
 });

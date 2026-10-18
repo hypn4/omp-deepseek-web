@@ -64,6 +64,15 @@
     }
   }
 
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message === null || typeof message !== "object" || message.type !== "deepseek-sync-now") {
+      return false;
+    }
+    sync();
+    sendResponse({ ok: true });
+    return false;
+  });
+
   sync();
   setInterval(sync, POLL_MS);
 })();

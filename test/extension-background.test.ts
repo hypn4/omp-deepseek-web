@@ -24,6 +24,16 @@ interface ChromeMock {
     connectNative(name: string): PortMock;
     lastError?: { message?: string };
   };
+  storage: {
+    local: {
+      set(value: Record<string, unknown>): void;
+    };
+  };
+  action: {
+    setBadgeText(value: { text: string }): void;
+    setBadgeBackgroundColor(value: { color: string }): void;
+    setTitle(value: { title: string }): void;
+  };
 }
 
 interface BackgroundMock {
@@ -32,12 +42,18 @@ interface BackgroundMock {
   getHostName(): string | undefined;
   getSent(): unknown[];
   port: PortMock;
+  statusWrites: Array<Record<string, unknown>>;
+  badgeTexts: string[];
+  badgeColors: string[];
 }
 
 function loadBackground(): BackgroundMock {
   let listener: MessageListener | undefined;
   let hostName: string | undefined;
   const sent: unknown[] = [];
+  const statusWrites: Array<Record<string, unknown>> = [];
+  const badgeTexts: string[] = [];
+  const badgeColors: string[] = [];
   let messageListener: ((value: unknown) => void) | undefined;
   let disconnectListener: (() => void) | undefined;
 
@@ -77,6 +93,22 @@ function loadBackground(): BackgroundMock {
       },
       lastError: undefined,
     },
+    storage: {
+      local: {
+        set(value) {
+          statusWrites.push(value);
+        },
+      },
+    },
+    action: {
+      setBadgeText(value) {
+        badgeTexts.push(value.text);
+      },
+      setBadgeBackgroundColor(value) {
+        badgeColors.push(value.color);
+      },
+      setTitle() {},
+    },
   };
 
   const source = readFileSync(
@@ -96,6 +128,9 @@ function loadBackground(): BackgroundMock {
     getHostName: () => hostName,
     getSent: () => sent,
     port,
+    statusWrites,
+    badgeTexts,
+    badgeColors,
   };
 }
 
@@ -135,6 +170,43 @@ describe("extension background", () => {
 
     expect(mock.getHostName()).toBeUndefined();
     expect(response).toEqual({ ok: false, error: "Missing token." });
+  });
+
+  test("publishes a connected status and success badge", () => {
+    const mock = loadBackground();
+
+    mock.getListener()(
+      { type: "deepseek-token", token: "stored-token", deviceId: "device-1" },
+      {},
+      () => {},
+    );
+    mock.port.notifyMessage({ ok: true });
+
+    const status = mock.statusWrites.at(-1)?.deepseekWebStatus as
+      | { state: string; message: string; deviceIdPresent: boolean }
+      | undefined;
+    expect(status?.state).toBe("connected");
+    expect(status?.message).toContain("synced");
+    expect(status?.deviceIdPresent).toBe(true);
+    expect(mock.badgeTexts.at(-1)).toBe("✓");
+    expect(mock.badgeColors.at(-1)).toBe("#188038");
+  });
+
+  test("publishes a missing-token status and warning badge", () => {
+    const mock = loadBackground();
+
+    mock.getListener()(
+      { type: "deepseek-token", token: "   " },
+      {},
+      () => {},
+    );
+
+    const status = mock.statusWrites.at(-1)?.deepseekWebStatus as
+      | { state: string; message: string }
+      | undefined;
+    expect(status?.state).toBe("missing");
+    expect(status?.message).toContain("No token");
+    expect(mock.badgeTexts.at(-1)).toBe("!");
   });
 
   test("reports a native host disconnect", () => {

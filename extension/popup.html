@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSeek Token Bridge</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand">
+          <span class="mark" aria-hidden="true">DS</span>
+          <div>
+            <h1>DeepSeek Web</h1>
+            <p>Token bridge for omp</p>
+          </div>
+        </div>
+        <span id="state-dot" class="dot idle" title="Status"></span>
+      </header>
+
+      <section class="status" aria-live="polite">
+        <p id="message">Checking status…</p>
+        <dl>
+          <div>
+            <dt>Last sync</dt>
+            <dd id="last-sync">—</dd>
+          </div>
+          <div>
+            <dt>Device id</dt>
+            <dd id="device">—</dd>
+          </div>
+          <div>
+            <dt>Native host</dt>
+            <dd id="host">com.whales.deepseek_web</dd>
+          </div>
+        </dl>
+      </section>
+
+      <div class="actions">
+        <button id="sync" class="primary" type="button">Sync now</button>
+        <button id="open" type="button">Open DeepSeek</button>
+      </div>
+
+      <p class="hint">
+        The token is sent only to the local omp native host. It is never shown
+        here or written to logs.
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -38,6 +38,15 @@ function promptFor(context: PromptContext): string {
 }
 
 export default function deepseekWebExtension(pi: ExtensionAPI): void {
+  pi.setLabel("DeepSeek Web");
+  pi.on("session_start", (_event, ctx) => {
+    const hasToken = readAuthValue(DEFAULT_TOKEN_PATH) !== null;
+    ctx.ui.setStatus(
+      "deepseek-web",
+      hasToken ? "DeepSeek Web ✓" : "DeepSeek Web: token missing",
+    );
+  });
+
   pi.registerProvider(PROVIDER_ID, {
     baseUrl: "https://deepseek-web.invalid/",
     apiKey: "unused-by-extension",
