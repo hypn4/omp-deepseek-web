@@ -29,11 +29,22 @@ export interface NativeCompletionTransport {
 export type NativeCompletionProgress = (result: DeepSeekSseResult) => void;
 export type NativeRecovery = "continue" | "resume" | "rate-limit";
 
+export interface RateLimitRecovery {
+  /** 1-based retry number. */
+  retry: number;
+  maxRetries: number;
+  /** Wait before the next request; zero when giving up. */
+  delayMs: number;
+  final: boolean;
+}
+
 export interface NativeCompletionOptions {
   /** Additional requests after a rate-limit hint. */
   rateLimitRetries?: number;
-  /** Initial backoff delay; doubles per retry. */
+  /** Initial backoff delay; doubles per retry up to the cap. */
   rateLimitDelayMs?: number;
+  /** Upper bound for exponential backoff. */
+  rateLimitMaxDelayMs?: number;
   /** Shared pacing gate for this process/account. */
   gate?: RequestGate;
 }
@@ -93,16 +104,20 @@ export async function runNativeCompletion(
   request: DeepSeekCompletionRequest,
   signal: AbortSignal,
   onProgress?: NativeCompletionProgress,
-  onRecovery?: (recovery: NativeRecovery) => void,
+  onRecovery?: (recovery: NativeRecovery, info?: RateLimitRecovery) => void,
   options: NativeCompletionOptions = {},
 ): Promise<DeepSeekSseResult> {
-  const maxRateLimitRetries = Math.max(
-    0,
-    Math.trunc(options.rateLimitRetries ?? 2),
+  const maxRateLimitRetries = Math.min(
+    100,
+    Math.max(0, Math.trunc(options.rateLimitRetries ?? 100)),
   );
   const rateLimitDelayMs = Math.max(
     0,
     Math.trunc(options.rateLimitDelayMs ?? 5_000),
+  );
+  const rateLimitMaxDelayMs = Math.max(
+    0,
+    Math.trunc(options.rateLimitMaxDelayMs ?? 60_000),
   );
   const gate = options.gate ?? new RequestGate();
   const collect = async (
@@ -124,15 +139,32 @@ export async function runNativeCompletion(
       }
       const message = next.errorMessage ?? "DeepSeek rate limit reached";
       const advertisedDelay = transport.retryAfterMs?.();
+      const backoff = rateLimitDelayMs * 2 ** Math.min(attempt, 20);
       const delayMs =
         advertisedDelay !== undefined && advertisedDelay >= 0
           ? advertisedDelay
-          : rateLimitDelayMs * 2 ** attempt;
+          : Math.min(backoff, rateLimitMaxDelayMs);
       gate.cooldown(delayMs);
       if (hasVisibleContent(next) || attempt >= maxRateLimitRetries) {
-        throw new DeepSeekApiError(-1, message, 429);
+        onRecovery?.("rate-limit", {
+          retry: Math.min(attempt + 1, maxRateLimitRetries),
+          maxRetries: maxRateLimitRetries,
+          delayMs: 0,
+          final: true,
+        });
+        const attempts = attempt + 1;
+        throw new DeepSeekApiError(
+          -1,
+          `${message} (after ${attempts} attempt${attempts === 1 ? "" : "s"})`,
+          429,
+        );
       }
-      onRecovery?.("rate-limit");
+      onRecovery?.("rate-limit", {
+        retry: attempt + 1,
+        maxRetries: maxRateLimitRetries,
+        delayMs,
+        final: false,
+      });
     }
   };
 

@@ -9,7 +9,9 @@ import {
   needsNativeContinuation,
   runNativeCompletion,
 } from "../src/deepseek/native-turn";
+import type { RateLimitRecovery } from "../src/deepseek/native-turn";
 import { resolveNonNegativeInt } from "../src/deepseek/options";
+import { abortReason } from "../src/deepseek/rate-limit";
 import type { RequestGate } from "../src/deepseek/rate-limit";
 import { stripToolMarkup } from "../src/openai/translate";
 import { parseToolCalls } from "../src/tools/parser";
@@ -85,6 +87,28 @@ function imageName(image: PromptImage, index: number): string {
   return `image-${index + 1}.${extension}`;
 }
 
+function formatDelay(milliseconds: number): string {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m${rest}s`;
+}
+
+function rateLimitStatus(info?: RateLimitRecovery): string {
+  if (info === undefined) {
+    return "DeepSeek Web: rate limited, retrying…";
+  }
+  if (info.final) {
+    return info.delayMs === 0
+      ? "DeepSeek Web: rate limited, giving up…"
+      : `DeepSeek Web: rate limited, retry ${info.retry}/${info.maxRetries} in ${formatDelay(info.delayMs)}…`;
+  }
+  return `DeepSeek Web: rate limited, retry ${info.retry}/${info.maxRetries} in ${formatDelay(info.delayMs)}…`;
+}
+
 function searchStatusLabel(status: string): string {
   const normalized = status.toLowerCase();
   if (normalized.includes("search")) {
@@ -111,6 +135,8 @@ export interface ProviderTurnOptions {
   rateLimitRetries?: number;
   /** Override initial rate-limit backoff; defaults to DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS. */
   rateLimitDelayMs?: number;
+  /** Override the backoff cap; defaults to DEEPSEEK_WEB_RATE_LIMIT_MAX_DELAY_MS. */
+  rateLimitMaxDelayMs?: number;
 }
 
 /**
@@ -261,24 +287,33 @@ export async function runDeepSeekTurn(
       },
       signal,
       onProgress,
-      (recovery) => {
+      (recovery, info) => {
         deps.onStatus?.(
           recovery === "continue"
             ? "DeepSeek Web: continuing…"
             : recovery === "resume"
               ? "DeepSeek Web: resuming…"
-              : "DeepSeek Web: rate limited, retrying…",
+              : rateLimitStatus(info),
         );
       },
       {
         rateLimitRetries:
           options.rateLimitRetries ??
-          resolveNonNegativeInt(process.env.DEEPSEEK_WEB_RATE_LIMIT_RETRIES, 2),
+          resolveNonNegativeInt(
+            process.env.DEEPSEEK_WEB_RATE_LIMIT_RETRIES,
+            100,
+          ),
         rateLimitDelayMs:
           options.rateLimitDelayMs ??
           resolveNonNegativeInt(
             process.env.DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS,
             10_000,
+          ),
+        rateLimitMaxDelayMs:
+          options.rateLimitMaxDelayMs ??
+          resolveNonNegativeInt(
+            process.env.DEEPSEEK_WEB_RATE_LIMIT_MAX_DELAY_MS,
+            60_000,
           ),
         gate: deps.requestGate,
       },
@@ -289,7 +324,7 @@ export async function runDeepSeekTurn(
       // A reused chat may already contain useful history; keep it even though
       // its mapping is dirty. A fresh chat is safe to delete.
       keepSession = plan.persistent && plan.reused;
-      emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
+      emitter.fail(abortReason(signal));
       return;
     }
 
@@ -348,7 +383,7 @@ export async function runDeepSeekTurn(
     // Never delete a pre-existing native chat because a later turn failed.
     // The mapping is invalidated so the next turn starts with a full prompt.
     keepSession = plan.persistent && plan.reused;
-    const failure = signal.aborted ? (signal.reason ?? error) : tokenError(error);
+    const failure = signal.aborted ? abortReason(signal) : tokenError(error);
     emitter.fail(failure);
     deps.onStatus?.("DeepSeek Web: error");
   } finally {

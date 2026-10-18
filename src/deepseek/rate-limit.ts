@@ -1,3 +1,12 @@
+/** Returns a classifier-friendly abort error for a cancelled signal. */
+export function abortReason(signal: AbortSignal): Error {
+  const reason = signal.reason;
+  if (reason instanceof Error) {
+    return reason;
+  }
+  return new DOMException("Request was aborted", "AbortError");
+}
+
 /** Sleeps for `milliseconds`, rejecting when the signal aborts. */
 export async function sleepWithSignal(
   milliseconds: number,
@@ -7,7 +16,7 @@ export async function sleepWithSignal(
     return;
   }
   if (signal.aborted) {
-    throw signal.reason ?? new Error("aborted");
+    throw abortReason(signal);
   }
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   const timer = setTimeout(() => {
@@ -16,7 +25,7 @@ export async function sleepWithSignal(
   }, milliseconds);
   const onAbort = (): void => {
     clearTimeout(timer);
-    reject(signal.reason ?? new Error("aborted"));
+    reject(abortReason(signal));
   };
   signal.addEventListener("abort", onAbort, { once: true });
   await promise;

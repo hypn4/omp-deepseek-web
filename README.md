@@ -233,8 +233,9 @@ In ephemeral mode every provider call creates and deletes its own DeepSeek chat.
 | `DEEPSEEK_WEB_BUNDLE_ID` | `com.deepseek.chat.nov` | Native client bundle id header. |
 | `DEEPSEEK_WEB_DEVICE_MODEL` | `Android` | Native device-model header. |
 | `DEEPSEEK_WEB_CONTEXT_WINDOW` | `1000000` | Direct web API context limit. The model/API documents 1M; prompts above it return `context_length_exceeded`. |
-| `DEEPSEEK_WEB_RATE_LIMIT_RETRIES` | `2` | Retry a rate-limit hint only when no text/thinking was emitted. |
-| `DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS` | `10000` | Initial backoff; doubles per retry (10s, 20s, ...). |
+| `DEEPSEEK_WEB_RATE_LIMIT_RETRIES` | `100` | Retry a rate-limit hint only when no text/thinking was emitted; capped at 100. |
+| `DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS` | `10000` | Initial backoff; doubles per retry (10s, 20s, 40s, ...). |
+| `DEEPSEEK_WEB_RATE_LIMIT_MAX_DELAY_MS` | `60000` | Upper bound for exponential backoff; a server-supplied retry delay is used verbatim. |
 | `DEEPSEEK_WEB_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum spacing between requests from this process, shared across sessions and tool loops. |
 | `DEEPSEEK_WEB_SESSION_MODE` | `persistent` | `persistent` reuses one native chat per omp conversation; `ephemeral` creates and deletes a chat per provider call. |
 | `DEEPSEEK_WEB_SESSION_STORE` | `~/.omp/agent/deepseek-web-sessions.sqlite` | Owner-only SQLite mapping database for persistent sessions. |
@@ -301,9 +302,12 @@ bun extension/install.ts --uninstall
   exponential backoff only when no visible text/thinking was emitted. When the
   server supplies `Retry-After` or a rate-limit reset header, that exact delay is
   used; current DeepSeek web responses supply neither, so the configured backoff
-  is the fallback. Requests are also spaced by a shared process-wide gate and
-  enter a cooldown after a limit. After the retry budget the provider surfaces an
-  HTTP-429-style error; retrying after visible output would duplicate content.
+  is the fallback (default: 100 retries, 10s doubling capped at 60s). Requests
+  are spaced by a shared process-wide gate and enter a cooldown after a limit.
+  The status line reports the current retry and delay, and cancellation during a
+  wait surfaces as an aborted turn instead of a rate-limit error. After the retry
+  budget the provider surfaces an HTTP-429-style error with the attempt count;
+  retrying after visible output would duplicate content.
 - **Context window is the direct web API limit.** Live probes against
   `/api/v0/chat/completion` accepted a 900K-token prompt and rejected a prompt
   above 1M tokens with `context_length_exceeded`. This matches the official

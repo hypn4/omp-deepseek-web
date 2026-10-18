@@ -149,6 +149,7 @@ function providerDeps(options: {
   onResume?: (request: DeepSeekResumeRequest) => void;
   onUpload?: (file: { data: Uint8Array; name: string; mimeType: string }) => void;
   onWait?: (id: string) => void;
+  onStatus?: (status: string | null) => void;
   planner?: ConversationPlanner;
   scopeKey?: string;
   buildIncrementalPrompt?: (context: PromptContext, startIndex: number) => string | null;
@@ -203,6 +204,7 @@ function providerDeps(options: {
     readDeviceId: () => "device-1",
     createClient: () => client,
     buildPrompt: () => "rendered prompt",
+    ...(options.onStatus === undefined ? {} : { onStatus: options.onStatus }),
     ...(options.planner === undefined ? {} : { planner: options.planner }),
     ...(options.scopeKey === undefined ? {} : { scopeKey: options.scopeKey }),
     ...(options.buildIncrementalPrompt === undefined
@@ -568,6 +570,84 @@ describe("DeepSeek omp provider", () => {
     expect(requests).toHaveLength(2);
     expect(sink.failure).toBeUndefined();
     expect(sink.ended?.content).toEqual([{ type: "text", text: "OK" }]);
+  });
+
+  test("reports retry count and delay in the status line", async () => {
+    const statuses: Array<string | null> = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          {
+            text: "",
+            messageId: 2,
+            finishReason: "rate_limit_reached",
+            errorMessage: "Messages too frequent. Try again later.",
+          },
+          { text: "OK", messageId: 4 },
+        ],
+        onStatus: (status) => statuses.push(status),
+      }),
+      undefined,
+      undefined,
+      { rateLimitDelayMs: 0, rateLimitRetries: 1 },
+    );
+
+    expect(sink.failure).toBeUndefined();
+    expect(statuses).toContain(
+      "DeepSeek Web: rate limited, retry 1/1 in 0s…",
+    );
+  });
+
+  test("includes the attempt count in the final rate-limit error", async () => {
+    const sink = await run(
+      providerDeps({
+        responses: [
+          {
+            text: "",
+            messageId: 2,
+            finishReason: "rate_limit_reached",
+            errorMessage: "Messages too frequent. Try again later.",
+          },
+          {
+            text: "",
+            messageId: 2,
+            finishReason: "rate_limit_reached",
+            errorMessage: "Messages too frequent. Try again later.",
+          },
+        ],
+      }),
+      undefined,
+      undefined,
+      { rateLimitDelayMs: 0, rateLimitRetries: 1 },
+    );
+
+    expect(String(sink.failure)).toContain("(after 2 attempts)");
+  });
+
+  test("aborts a rate-limit wait without sending another request", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const controller = new AbortController();
+    const deps = providerDeps({
+      responses: [
+        {
+          text: "",
+          messageId: 2,
+          finishReason: "rate_limit_reached",
+          errorMessage: "Messages too frequent. Try again later.",
+        },
+      ],
+      onComplete: (request) => requests.push(request),
+    });
+    setTimeout(() => controller.abort(), 20);
+
+    const sink = await run(deps, undefined, controller.signal, {
+      rateLimitDelayMs: 1_000,
+      rateLimitRetries: 5,
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(sink.failure).toBeInstanceOf(Error);
+    expect((sink.failure as Error).name).toBe("AbortError");
   });
 
   test("does not retry a rate-limit hint after visible content", async () => {
