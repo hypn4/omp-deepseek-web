@@ -14,6 +14,10 @@ class FakeSink {
   end(message?: AssistantMessage): void {
     this.ended = message;
   }
+
+  fail(_error: unknown): void {
+    throw new Error("buffered emitter must not fail a turn");
+  }
 }
 
 const MODEL = {
@@ -71,7 +75,7 @@ describe("buffered completion emitter", () => {
   test("emits tool calls with a toolUse stop reason", () => {
     const sink = new FakeSink();
     const toolCalls: ParsedToolCall[] = [
-      { id: "call-1", name: "read", arguments: { path: "/tmp/file" } },
+      { id: "call-1", name: "read", arguments: JSON.stringify({ path: "/tmp/file" }) },
     ];
 
     emitBufferedCompletion(sink, MODEL, completion("Reading.", "", toolCalls));
