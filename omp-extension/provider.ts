@@ -8,7 +8,8 @@ import type {
   EventSink,
   ModelIdentity,
 } from "./events";
-import type { PromptContext } from "./prompt";
+import { collectTurnImages } from "./prompt";
+import type { PromptContext, PromptImage } from "./prompt";
 
 export interface DeepSeekClientLike {
   createSession(): Promise<string>;
@@ -17,6 +18,12 @@ export interface DeepSeekClientLike {
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>>;
   deleteSession(sessionId: string): Promise<void>;
+  uploadFile?(file: {
+    data: Uint8Array;
+    name: string;
+    mimeType: string;
+  }): Promise<string>;
+  waitForFileReady?(id: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface ProviderDeps {
@@ -38,6 +45,18 @@ function tokenError(error: unknown): Error {
     );
   }
   return error instanceof Error ? error : new Error(String(error));
+}
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+function imageName(image: PromptImage, index: number): string {
+  const extension = IMAGE_EXTENSIONS[image.mimeType] ?? "bin";
+  return `image-${index + 1}.${extension}`;
 }
 
 export interface ProviderTurnOptions {
@@ -96,11 +115,29 @@ export async function runDeepSeekTurn(
 
   try {
     client = deps.createClient(token, deviceId);
+    const images = collectTurnImages(context);
+    const refFileIds: string[] = [];
+    if (images.length > 0) {
+      if (client.uploadFile === undefined || client.waitForFileReady === undefined) {
+        throw new Error("This client does not support image input.");
+      }
+      for (const [index, image] of images.entries()) {
+        const id = await client.uploadFile({
+          data: Buffer.from(image.data, "base64"),
+          name: imageName(image, index),
+          mimeType: image.mimeType,
+        });
+        await client.waitForFileReady(id, signal);
+        refFileIds.push(id);
+      }
+    }
+
     sessionId = await client.createSession();
     const upstream = await client.complete(
       {
         chatSessionId: sessionId,
         prompt,
+        refFileIds,
         thinkingEnabled: hasTools ? false : (options.thinkingEnabled ?? true),
         searchEnabled: options.searchEnabled ?? true,
       },

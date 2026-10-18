@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildOmpPrompt } from "../omp-extension/prompt";
+import { buildOmpPrompt, collectTurnImages } from "../omp-extension/prompt";
 
 type TextPart = { type: "text"; text: string };
 type ImagePart = { type: "image"; data: string; mimeType: string };
@@ -116,7 +116,7 @@ describe("omp prompt adapter", () => {
     expect(result).toContain("Continue the task using the tool results above.");
   });
 
-  test("joins text parts and rejects images", () => {
+  test("joins text parts and renders image placeholders", () => {
     expect(
       prompt([
         {
@@ -129,13 +129,47 @@ describe("omp prompt adapter", () => {
       ]),
     ).toContain("User:\nfirst\nsecond");
 
-    expect(() =>
+    expect(
       prompt([
         {
           role: "user",
-          content: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+          content: [
+            { type: "text", text: "describe" },
+            { type: "image", data: "AAAA", mimeType: "image/png" },
+          ],
         },
       ]),
-    ).toThrow("text input only");
+    ).toContain("User:\ndescribe\n[image attached: image/png]");
+  });
+
+  test("collects images from the latest turn only", () => {
+    const images = collectTurnImages({
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "image", data: "OLD", mimeType: "image/png" }],
+        },
+        { role: "assistant", content: [{ type: "text", text: "ok" }] },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "new" },
+            { type: "image", data: "NEW", mimeType: "image/jpeg" },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "read",
+          content: [{ type: "image", data: "TOOL", mimeType: "image/webp" }],
+          isError: false,
+        },
+      ],
+    });
+
+    expect(images).toEqual([
+      { data: "NEW", mimeType: "image/jpeg" },
+      { data: "TOOL", mimeType: "image/webp" },
+    ]);
   });
 });

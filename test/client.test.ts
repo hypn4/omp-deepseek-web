@@ -303,3 +303,55 @@ describe("DeepSeekClient", () => {
     expect((error as DeepSeekApiError).code).toBe(12345);
   });
 });
+
+describe("image upload", () => {
+  const UPLOAD_CHALLENGE = {
+    ...POW_CHALLENGE,
+    target_path: "/api/v0/file/upload_file",
+  };
+
+  test("uploads a multipart file with PoW and waits for parsing", async () => {
+    const calls = installFetch(
+      jsonResponse(envelope({ challenge: UPLOAD_CHALLENGE })),
+      jsonResponse(envelope({ id: "file-1", status: "PENDING" })),
+      jsonResponse(
+        envelope({ files: [{ id: "file-1", status: "PENDING" }] }),
+      ),
+      jsonResponse(
+        envelope({ files: [{ id: "file-1", status: "SUCCESS" }] }),
+      ),
+    );
+
+    const client = makeClient();
+    const id = await client.uploadFile({
+      data: new Uint8Array([1, 2, 3]),
+      name: "test.png",
+      mimeType: "image/png",
+    });
+    await client.waitForFileReady("file-1", undefined, { intervalMs: 0 });
+
+    expect(id).toBe("file-1");
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://chat.deepseek.com/api/v0/chat/create_pow_challenge",
+      "https://chat.deepseek.com/api/v0/file/upload_file",
+      "https://chat.deepseek.com/api/v0/file/fetch_files?file_ids=file-1",
+      "https://chat.deepseek.com/api/v0/file/fetch_files?file_ids=file-1",
+    ]);
+
+    const upload = calls[1]!;
+    expect(upload.init.method).toBe("POST");
+    expect(upload.init.body).toBeInstanceOf(FormData);
+    const headers = new Headers(upload.init.headers);
+    expect(headers.get("x-file-size")).toBe("3");
+    expect(headers.get("x-ds-pow-response")).not.toBeNull();
+    expect(headers.get("content-type")).toBeNull();
+
+    const form = upload.init.body as FormData;
+    const file = form.get("file") as File;
+    expect(file.name).toBe("test.png");
+    expect(file.type).toBe("image/png");
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+});

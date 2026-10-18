@@ -26,6 +26,19 @@ export interface DeepSeekCompletionRequest {
   preempt?: boolean;
 }
 
+export interface DeepSeekUploadFile {
+  data: Uint8Array;
+  name: string;
+  mimeType: string;
+}
+
+export interface WaitForFileOptions {
+  /** Poll interval; defaults to 500 ms. */
+  intervalMs?: number;
+  /** Overall parse timeout; defaults to 60 s. */
+  timeoutMs?: number;
+}
+
 /** The challenge object returned by `POST /api/v0/chat/create_pow_challenge`. */
 export interface DeepSeekPowChallenge extends PowChallenge {
   algorithm: string;

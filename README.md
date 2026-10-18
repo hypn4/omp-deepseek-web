@@ -127,7 +127,10 @@ The provider currently uses:
   tools are present, because DeepSeek web only emits tool calls with thinking off.
 - Web search: on by default.
 - Set `DEEPSEEK_WEB_THINKING=0` or `DEEPSEEK_WEB_SEARCH=0` to disable either.
-- Inputs: text only
+- Inputs: text and images (PNG, JPEG, WebP, GIF). Images in the latest user
+  turn, and tool-result images produced while handling it, are uploaded to
+  `chat.deepseek.com` and referenced by `ref_file_ids`. Older history images are
+  not re-uploaded.
 - Model metadata: 128k context, 8k output (estimates)
 
 `DEEPSEEK_WEB_TOKEN_CMD` is an optional advanced fallback. When a request gets
@@ -147,7 +150,10 @@ bun extension/install.ts --uninstall
   Use at your own risk and with your own account.
 - **Buffered streaming.** The provider collects the full upstream response before
   emitting omp events; text does not appear incrementally.
-- **Text only.** Images are rejected; the model metadata advertises text input.
+- **Image support is per-turn.** Current-turn images are uploaded through
+  `POST /api/v0/file/upload_file` and referenced with `ref_file_ids`; images
+  from older history are not re-uploaded. Upload/parse failures surface as the
+  turn error.
 - **Tool-call format risk.** DeepSeek web has no native tool calling. The provider
   prompts for DSML (with a V3.1 fallback parser). A hidden prompt or model update
   can break the convention; malformed blocks remain ordinary text. Tool calling

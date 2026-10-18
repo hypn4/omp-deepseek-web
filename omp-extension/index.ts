@@ -56,7 +56,7 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
         id: MODEL_ID,
         name: "DeepSeek Web (free)",
         reasoning: true,
-        input: ["text"],
+        input: ["text", "image"],
         supportsTools: true,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 128000,

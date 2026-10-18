@@ -3,9 +3,13 @@ import type {
   DeepSeekCompletionRequest,
   DeepSeekConfig,
   DeepSeekPowChallenge,
+  DeepSeekUploadFile,
+  WaitForFileOptions,
 } from "./types";
 
 const COMPLETION_PATH = "/api/v0/chat/completion";
+const FILE_UPLOAD_PATH = "/api/v0/file/upload_file";
+const FILE_FETCH_PATH = "/api/v0/file/fetch_files";
 const CLIENT_BUNDLE_ID = "com.deepseek.chat";
 
 interface DeepSeekEnvelope<T> {
@@ -99,10 +103,13 @@ export class DeepSeekClient {
     path: string,
     init: RequestInit = {},
     token = this.#token,
+    options: { json?: boolean } = {},
   ): Promise<Response> {
     const headers = new Headers(init.headers);
+    if (options.json !== false) {
+      headers.set("content-type", "application/json");
+    }
     headers.set("authorization", `Bearer ${token}`);
-    headers.set("content-type", "application/json");
     headers.set("x-client-platform", "web");
     headers.set("x-client-version", this.#clientVersion);
     headers.set("x-client-bundle-id", CLIENT_BUNDLE_ID);
@@ -287,6 +294,23 @@ export class DeepSeekClient {
     return challenge;
   }
 
+  #powHeader(
+    challenge: DeepSeekPowChallenge,
+    targetPath: string,
+  ): string {
+    const answer = solvePow(challenge);
+    return btoa(
+      JSON.stringify({
+        algorithm: challenge.algorithm,
+        challenge: challenge.challenge,
+        salt: challenge.salt,
+        answer,
+        signature: challenge.signature,
+        target_path: challenge.target_path ?? targetPath,
+      }),
+    );
+  }
+
   async complete(
     req: DeepSeekCompletionRequest,
     signal?: AbortSignal,
@@ -299,17 +323,7 @@ export class DeepSeekClient {
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>> {
     const challenge = await this.createChallenge(COMPLETION_PATH);
-    const answer = solvePow(challenge);
-    const powHeader = btoa(
-      JSON.stringify({
-        algorithm: challenge.algorithm,
-        challenge: challenge.challenge,
-        salt: challenge.salt,
-        answer,
-        signature: challenge.signature,
-        target_path: challenge.target_path ?? COMPLETION_PATH,
-      }),
-    );
+    const powHeader = this.#powHeader(challenge, COMPLETION_PATH);
 
     const response = await this.#request(COMPLETION_PATH, {
       method: "POST",
@@ -346,6 +360,131 @@ export class DeepSeekClient {
       );
     }
     return response.body;
+  }
+
+  async uploadFile(file: DeepSeekUploadFile): Promise<string> {
+    return this.#withRetry(() => this.#uploadFileOnce(file));
+  }
+
+  async #uploadFileOnce(file: DeepSeekUploadFile): Promise<string> {
+    const challenge = await this.createChallenge(FILE_UPLOAD_PATH);
+    const powHeader = this.#powHeader(challenge, FILE_UPLOAD_PATH);
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([file.data], { type: file.mimeType }),
+      file.name,
+    );
+    const response = await this.#request(
+      FILE_UPLOAD_PATH,
+      {
+        method: "POST",
+        body: form,
+        headers: {
+          "x-ds-pow-response": powHeader,
+          "x-file-size": String(file.data.byteLength),
+        },
+      },
+      this.#token,
+      { json: false },
+    );
+    const data = await this.#readEnvelope<{ id?: string; status?: string }>(
+      response,
+    );
+    const id = data?.id;
+    if (typeof id !== "string" || id === "") {
+      throw new DeepSeekApiError(
+        -1,
+        "DeepSeek did not return an uploaded file id",
+        response.status,
+      );
+    }
+    return id;
+  }
+
+  async waitForFileReady(
+    id: string,
+    signal?: AbortSignal,
+    options: WaitForFileOptions = {},
+  ): Promise<void> {
+    const intervalMs = options.intervalMs ?? 500;
+    const timeoutMs = options.timeoutMs ?? 60_000;
+    return this.#withRetry(
+      () => this.#waitForFileReadyOnce(id, intervalMs, timeoutMs, signal),
+      signal,
+    );
+  }
+
+  async #waitForFileReadyOnce(
+    id: string,
+    intervalMs: number,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const response = await this.#request(
+        `${FILE_FETCH_PATH}?file_ids=${encodeURIComponent(id)}`,
+        { method: "GET", signal },
+      );
+      const data = await this.#readEnvelope<{
+        files?: Array<{
+          id?: string;
+          status?: string;
+          error_code?: string | null;
+        }>;
+      }>(response);
+      const file = data?.files?.find((entry) => entry.id === id);
+      if (file === undefined) {
+        throw new DeepSeekApiError(
+          -1,
+          "DeepSeek did not return the uploaded file status",
+          response.status,
+        );
+      }
+      if (file.status === "SUCCESS") {
+        return;
+      }
+      if (file.status === "FAILED") {
+        throw new DeepSeekApiError(
+          -1,
+          `DeepSeek could not parse the uploaded image${
+            file.error_code === null || file.error_code === undefined
+              ? ""
+              : ` (${file.error_code})`
+          }`,
+          response.status,
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new DeepSeekApiError(
+          -1,
+          "DeepSeek image parsing timed out",
+          504,
+        );
+      }
+      await this.#sleep(intervalMs, signal);
+    }
+  }
+
+  async #sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+    if (milliseconds <= 0) {
+      return;
+    }
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error("aborted");
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, milliseconds);
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        reject(signal?.reason ?? new Error("aborted"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   async checkDevice(

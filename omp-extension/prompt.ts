@@ -12,6 +12,11 @@ export interface PromptImagePart {
   mimeType: string;
 }
 
+export interface PromptImage {
+  data: string;
+  mimeType: string;
+}
+
 export interface PromptThinkingPart {
   type: "thinking";
   thinking: string;
@@ -72,7 +77,7 @@ function textContent(content: PromptUserContent | PromptMessage["content"]): str
       continue;
     }
     if (part.type === "image") {
-      throw new Error("deepseek-web supports text input only");
+      parts.push(`[image attached: ${part.mimeType}]`);
     }
   }
   return parts.join("\n");
@@ -87,6 +92,48 @@ function toToolCall(call: PromptToolCall): OpenAIToolCall {
       arguments: JSON.stringify(call.arguments),
     },
   };
+}
+
+/**
+ * Collects images from the latest user turn, including tool-result images
+ * produced while handling it. Older history images are not re-uploaded.
+ */
+export function collectTurnImages(context: PromptContext): PromptImage[] {
+  let start = -1;
+  for (let index = context.messages.length - 1; index >= 0; index -= 1) {
+    const role = context.messages[index]?.role;
+    if (role === "user" || role === "developer") {
+      start = index;
+      break;
+    }
+  }
+  if (start < 0) {
+    return [];
+  }
+
+  const images: PromptImage[] = [];
+  for (let index = start; index < context.messages.length; index += 1) {
+    const message = context.messages[index];
+    if (message === undefined) {
+      continue;
+    }
+    if (
+      message.role !== "user" &&
+      message.role !== "developer" &&
+      message.role !== "toolResult"
+    ) {
+      continue;
+    }
+    if (typeof message.content === "string") {
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "image") {
+        images.push({ data: part.data, mimeType: part.mimeType });
+      }
+    }
+  }
+  return images;
 }
 
 /**

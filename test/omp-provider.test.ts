@@ -54,6 +54,12 @@ interface FakeClient {
     signal?: AbortSignal,
   ): Promise<ReadableStream<Uint8Array>>;
   deleteSession(sessionId: string): Promise<void>;
+  uploadFile?(file: {
+    data: Uint8Array;
+    name: string;
+    mimeType: string;
+  }): Promise<string>;
+  waitForFileReady?(id: string, signal?: AbortSignal): Promise<void>;
 }
 
 function providerDeps(options: {
@@ -63,7 +69,10 @@ function providerDeps(options: {
   completeError?: Error;
   onDelete?: (sessionId: string) => void;
   onComplete?: (request: DeepSeekCompletionRequest) => void;
+  onUpload?: (file: { data: Uint8Array; name: string; mimeType: string }) => void;
+  onWait?: (id: string) => void;
 }): ProviderDeps {
+  let uploadCount = 0;
   const client: FakeClient = {
     async createSession() {
       return "session-1";
@@ -77,6 +86,14 @@ function providerDeps(options: {
     },
     async deleteSession(sessionId) {
       options.onDelete?.(sessionId);
+    },
+    async uploadFile(file) {
+      uploadCount += 1;
+      options.onUpload?.(file);
+      return `file-${uploadCount}`;
+    },
+    async waitForFileReady(id) {
+      options.onWait?.(id);
     },
   };
   return {
@@ -126,6 +143,46 @@ describe("DeepSeek omp provider", () => {
 
     expect(request?.thinkingEnabled).toBe(true);
     expect(request?.searchEnabled).toBe(true);
+  });
+
+  test("uploads turn images and passes their ids to completion", async () => {
+    let request: DeepSeekCompletionRequest | undefined;
+    const uploads: Array<{
+      data: Uint8Array;
+      name: string;
+      mimeType: string;
+    }> = [];
+    const waits: string[] = [];
+
+    const sink = await run(
+      providerDeps({
+        text: "I can see it.",
+        onComplete: (value) => {
+          request = value;
+        },
+        onUpload: (file) => uploads.push(file),
+        onWait: (id) => waits.push(id),
+      }),
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "describe" },
+              { type: "image", data: "AQID", mimeType: "image/png" },
+            ],
+          },
+        ],
+      },
+    );
+
+    expect(sink.failure).toBeUndefined();
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.name).toBe("image-1.png");
+    expect(uploads[0]?.mimeType).toBe("image/png");
+    expect(Array.from(uploads[0]?.data ?? [])).toEqual([1, 2, 3]);
+    expect(waits).toEqual(["file-1"]);
+    expect(request?.refFileIds).toEqual(["file-1"]);
   });
 
   test("parses a tool call and strips its markup", async () => {
