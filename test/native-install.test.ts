@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   NATIVE_HOST_NAME,
+  extensionIdFromKey,
   installNativeHost,
+  manifestExtensionId,
   nativeHostManifest,
   nativeHostManifestPath,
   uninstallNativeHost,
@@ -29,6 +31,13 @@ const REPO_ROOT = "/repo/deepseek-web";
 const BUN_PATH = "/usr/local/bin/bun";
 
 describe("native host installer", () => {
+  test("derives the pinned extension id from the manifest key", () => {
+    const id = manifestExtensionId(join(import.meta.dir, ".."));
+
+    expect(id).toBe("oabliooijagfijmlhdidggapcebhnepp");
+    expect(() => extensionIdFromKey("")).toThrow(/extension key/i);
+  });
+
   test("builds a host manifest scoped to the extension", () => {
     const manifest = nativeHostManifest({
       extensionId: EXTENSION_ID,

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "DeepSeek Web Token Bridge",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Sends the chat.deepseek.com session token to omp through native messaging.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6a52z89nFX8ODKB3HwkozLjFZ3BpC4o7s2ez5mWjaiTtnTWn5B7h4acP5cpoQsrwn1kUZYi2PE8USWo8NfuL5OjJny5sHXufLPrTtx3NjoxAwLbsUg/1H9tCHo2V249tZ1Aun3yJEe8uyC7hKYwm9a2JD5teUSnK7XiLonfyJMld9qPhceXo0btXhHpOGDgXf3OIsCj0VSqV5grlYo8m5vkSG+2eTXeXb3W9v7PV7E6d6QX0g5i7Fs02SyZW07ywDCUpv5sUD3S9VEGgxTErr2a7yalDdxm8ehxbU4HkgNutAsKeJqHGjOG8qTRstTWg8GiH95Nqj8qnXRDY+73ISwIDAQAB",
   "permissions": ["nativeMessaging", "storage", "activeTab"],
   "icons": {
     "16": "icons/deepseek-web-16.png",

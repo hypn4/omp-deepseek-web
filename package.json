@@ -1,8 +1,13 @@
 {
   "name": "deepseek-web",
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "description": "Use a free chat.deepseek.com account as an omp provider",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "scripts": {
     "test": "bun test",
     "install-native-host": "bun extension/install.ts"

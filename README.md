@@ -69,20 +69,26 @@ host packages.
 
 ### 1. Install the Chrome bridge
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the `extension/` directory.
-4. Copy the extension ID shown on the extension card.
-5. Install the native host:
+The extension ID is pinned in `extension/manifest.json`, so you do not need to
+copy it.
+
+1. Install the native host from the repository root:
 
    ```bash
-   bun extension/install.ts --extension-id <extension-id>
+   bun extension/install.ts
    ```
 
    For Chromium, Edge, or Brave, add
    `--browser chromium|edge|brave`.
-6. Reload the extension (or restart Chrome).
-7. Open <https://chat.deepseek.com> and sign in normally.
+
+2. Open `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select the `extension/` directory.
+5. Open <https://chat.deepseek.com> and sign in normally.
+
+The pinned ID keeps the native host working when the repository moves. If you
+build a custom extension with a different key, pass
+`--extension-id <id>` to the installer instead.
 
 The extension sends the token only when it changes; a failed send retries on the
 next poll. The status badge is `✓` when synced, `…` while syncing, and `!` when a
@@ -200,4 +206,4 @@ challenge.
 
 ## License
 
-No license has been added yet. Add one before distributing the project.
+MIT. See [LICENSE](./LICENSE).

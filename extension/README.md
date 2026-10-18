@@ -13,25 +13,28 @@ listener, proxy process, Google OAuth redirect, custom URL scheme, or CDP.
 
 ## Install
 
-1. Open `chrome://extensions`.
-2. Turn on **Developer mode**.
-3. Click **Load unpacked** and select this `extension/` directory.
-4. Copy the extension ID shown on its card.
-5. Install the native host from the repository root:
+The extension ID is pinned in `manifest.json`, so you do not need to copy it.
+
+1. Install the native host from the repository root:
 
    ```bash
-   bun extension/install.ts --extension-id <extension-id>
+   bun extension/install.ts
    ```
 
    Add `--browser chromium|edge|brave` if you are not using Chrome.
-6. Reload the extension (or restart Chrome) so it reconnects to the new host.
-7. Open <https://chat.deepseek.com> and sign in normally.
-8. Check that omp can see the token:
+2. Open `chrome://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked** and select this `extension/` directory.
+5. Open <https://chat.deepseek.com> and sign in normally.
+6. Check that omp can see the token:
 
    ```bash
    omp --no-extensions -e omp-extension/index.ts \
      --model deepseek-web/deepseek-web -p "Reply with exactly: OK"
    ```
+
+If you build a custom extension with a different key, pass
+`--extension-id <id>` to the installer instead.
 
 The content script polls localStorage every 5 seconds and sends only when the
 token or device id changes. A failed send retries on the next tick. If the web
