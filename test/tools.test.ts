@@ -266,6 +266,14 @@ describe("renderToolPrompt", () => {
     expect(prompt).toContain("### read");
     expect(prompt).toContain("### bash");
     expect(prompt).toContain("Description: Read a file");
+    expect(prompt).toContain("Required: path");
+    expect(prompt).toContain("Required: command");
+    expect(prompt).toContain(
+      "Before emitting, check the `Required` line for the chosen tool and include every listed field.",
+    );
+    expect(prompt).toContain(
+      "`i` is optional intent metadata. It never replaces a required parameter",
+    );
     expect(prompt).toContain(
       'Parameters: {"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}',
     );

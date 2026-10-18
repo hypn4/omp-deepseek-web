@@ -24,9 +24,15 @@ export function renderToolPrompt(tools: OpenAITool[]): string {
       type: "object",
       properties: {},
     };
+    const required = Array.isArray(parameters.required)
+      ? parameters.required.filter(
+          (name): name is string => typeof name === "string",
+        )
+      : [];
     return [
       `### ${tool.function.name}`,
       `Description: ${tool.function.description ?? ""}`,
+      `Required: ${required.length > 0 ? required.join(", ") : "none"}`,
       `Parameters: ${JSON.stringify(parameters)}`,
     ].join("\n");
   });
@@ -43,6 +49,8 @@ export function renderToolPrompt(tools: OpenAITool[]): string {
     "",
     "Rules:",
     "- Emit one or more invoke blocks.",
+    "- Before emitting, check the `Required` line for the chosen tool and include every listed field.",
+    "- `i` is optional intent metadata. It never replaces a required parameter such as a search `query` or a bash `command`.",
     "- When DeepThink is enabled, keep reasoning in the thinking block and emit the complete tool_calls block in the final RESPONSE.",
     "- Use the exact opening tags shown above; do not omit the leading bar before DSML.",
     "- Every invoke must include all required parameters; never send an invoke with an empty body.",
