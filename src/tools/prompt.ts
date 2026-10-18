@@ -39,7 +39,7 @@ export function renderToolPrompt(tools: OpenAITool[]): string {
 
   return [
     "You are the model backend for a coding agent.",
-    "Use ONLY the DSML tool protocol below. Do not use any built-in search or chat tools.",
+    "Use the DSML protocol only for the OMP tools listed below. Native DeepSeek web search may be used when the request enables it; do not use other built-in chat tools.",
     "",
     "## Tools",
     sections.join("\n\n"),

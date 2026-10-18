@@ -142,6 +142,23 @@ describe("omp prompt adapter", () => {
     ).toContain("User:\ndescribe\n[image attached: image/png]");
   });
 
+  test("renders arbitrary host tools without a hardcoded allowlist", () => {
+    const result = prompt(
+      [{ role: "user", content: "use the custom tool" }],
+      [
+        {
+          name: "custom_tool_7",
+          description: "A dynamically supplied tool",
+          parameters: { type: "object", properties: { value: { type: "string" } } },
+        },
+      ],
+    );
+
+    expect(result).toContain("### custom_tool_7");
+    expect(result).toContain("A dynamically supplied tool");
+    expect(result).not.toContain("web_search");
+  });
+
   test("collects images from the latest turn only", () => {
     const images = collectTurnImages({
       messages: [

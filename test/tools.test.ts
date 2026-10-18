@@ -295,7 +295,7 @@ describe("renderToolPrompt", () => {
       'Parameters: {"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}',
     );
     expect(prompt).toContain(
-      "Use ONLY the DSML tool protocol below. Do not use any built-in search or chat tools.",
+      "Use the DSML protocol only for the OMP tools listed below. Native DeepSeek web search may be used when the request enables it; do not use other built-in chat tools.",
     );
     expect(prompt).toContain("## Call format");
     expect(prompt).toContain(dsmlOpen("tool_calls"));

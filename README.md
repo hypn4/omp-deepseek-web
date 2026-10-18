@@ -21,6 +21,8 @@ repository and plugin package name changed.
   line (`searching…`, `composing…`)
 - Native recovery through DeepSeek's `/api/v0/chat/continue` and
   `/api/v0/chat/resume_stream`; no browser or text-heuristic fallback
+- Native DeepSeek search and dynamically supplied OMP tools (including
+  `web_search`) can be used together
 - Keeps the latest user message's language even when search results or tool
   output are in another language
 - Text and image input (PNG, JPEG, WebP, GIF)
@@ -174,7 +176,7 @@ omp --no-extensions \
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DEEPSEEK_WEB_THINKING` | `1` | Enable DeepThink. Set `0` to disable. |
-| `DEEPSEEK_WEB_SEARCH` | `1` | Enable web search. Set `0` to disable. |
+| `DEEPSEEK_WEB_SEARCH` | `1` | Enable native DeepSeek search. OMP tools, including `web_search`, remain dynamically available. Set `0` to disable native search only. |
 | `DEEPSEEK_WEB_PLATFORM` | `android` | Native client platform header. |
 | `DEEPSEEK_WEB_CLIENT_VERSION` | `2.6.2` | Native client version header. |
 | `DEEPSEEK_WEB_BUNDLE_ID` | `com.deepseek.chat.nov` | Native client bundle id header. |

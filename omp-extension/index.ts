@@ -71,6 +71,7 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
     ],
     streamSimple(model, context, options) {
       const stream = new AssistantMessageEventStream();
+      const searchEnabled = process.env.DEEPSEEK_WEB_SEARCH !== "0";
       void runDeepSeekTurn(
         {
           readToken: () => readAuthValue(DEFAULT_TOKEN_PATH),
@@ -96,7 +97,7 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
           thinkingEnabled: resolveThinkingEnabled(
             process.env.DEEPSEEK_WEB_THINKING,
           ),
-          searchEnabled: process.env.DEEPSEEK_WEB_SEARCH !== "0",
+          searchEnabled,
         },
         stream,
       );
