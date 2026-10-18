@@ -4,3 +4,4 @@ apk/
 .DS_Store
 *.log
 .env
+.worktrees/
