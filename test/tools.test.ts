@@ -84,6 +84,42 @@ describe("parseToolCalls", () => {
     expect(calls[0]?.arguments).toBe('{"command":"ls"}');
   });
 
+  test("parses canonical V3.1 with a function type segment and fenced JSON", () => {
+    const text = [
+      v31("tool_calls_begin"),
+      v31("tool_call_begin"),
+      "function",
+      v31("tool_sep"),
+      'read\n```json\n{"path":"/tmp/x"}\n```',
+      v31("tool_call_end"),
+      v31("tool_calls_end"),
+    ].join("");
+
+    const calls = parseToolCalls(text);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("read");
+    expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
+  });
+
+  test("parses the canonical layout when end_of_query replaces tool_sep", () => {
+    const text = [
+      v31("tool_calls_begin"),
+      v31("tool_call_begin"),
+      "function",
+      v31("end_of_query"),
+      'read\n```json\n{"path":"/tmp/y"}\n```',
+      v31("tool_call_end"),
+      v31("tool_calls_end"),
+    ].join("");
+
+    const calls = parseToolCalls(text);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("read");
+    expect(calls[0]?.arguments).toBe('{"path":"/tmp/y"}');
+  });
+
   test("parses multiple invokes in one DSML wrapper with distinct ids", () => {
     const text = [
       dsmlOpen("tool_calls"),
@@ -130,6 +166,34 @@ describe("parseToolCalls", () => {
       path: "/tmp/x",
       options: { mode: "append", count: 2 },
     });
+  });
+
+  test("rejects a DSML block whose string=false value is malformed JSON", () => {
+    const text = [
+      dsmlOpen("tool_calls"),
+      dsmlOpen('invoke name="write"'),
+      dsmlOpen('parameter name="options" string="false"') +
+        "{not json" +
+        dsmlClose(" parameter"),
+      `</invoke>`,
+      `</tool_calls>`,
+    ].join("");
+
+    expect(parseToolCalls(text)).toEqual([]);
+  });
+
+  test("buffers an unterminated DSML block through the end of the text", () => {
+    const text = [
+      dsmlOpen("tool_calls"),
+      dsmlOpen('invoke name="read"'),
+      dsmlOpen('parameter name="path" string="true"') + "/tmp/x",
+    ].join("\n");
+
+    const calls = parseToolCalls(text);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("read");
+    expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
   });
 
   test("returns no calls for plain assistant text", () => {
@@ -251,5 +315,43 @@ describe("renderToolResults", () => {
 
     expect(text).toContain("Tool result for read (call call_1):\nA");
     expect(text).toContain("Tool result for bash (call call_2):\nB");
+  });
+
+  test("does not invent a parameter when the arguments string is empty", () => {
+    const text = renderToolResults([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "noop", arguments: "" } },
+        ],
+      },
+    ]);
+
+    expect(text).toContain(dsmlOpen('invoke name="noop"'));
+    expect(text).not.toContain('name="arguments"');
+    expect(parseToolCalls(text)[0]?.arguments).toBe("{}");
+  });
+
+  test("round-trips DSML entities through replay and parse", () => {
+    const content = 'a < b & c > d';
+    const text = renderToolResults([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "write",
+              arguments: JSON.stringify({ content }),
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(parseToolCalls(text)[0]?.arguments).toBe(JSON.stringify({ content }));
   });
 });

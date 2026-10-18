@@ -5,6 +5,14 @@ const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
 const CONTINUE_PROMPT =
   "Continue the task using the tool results above. Do not repeat a tool call unless it is necessary.";
 
+/** Keeps tool text from being mistaken for DSML markup when replayed. */
+function escapeDsmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function renderToolCalls(calls: OpenAIToolCall[]): string {
   const lines = [`<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}tool_calls>`];
 
@@ -13,11 +21,14 @@ function renderToolCalls(calls: OpenAIToolCall[]): string {
       `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}invoke name="${call.function.name}">`,
     );
 
+    const rawArguments = call.function.arguments.trim();
     let parameters: unknown;
-    try {
-      parameters = JSON.parse(call.function.arguments);
-    } catch {
-      parameters = undefined;
+    if (rawArguments.length > 0) {
+      try {
+        parameters = JSON.parse(rawArguments);
+      } catch {
+        parameters = undefined;
+      }
     }
 
     if (
@@ -28,18 +39,18 @@ function renderToolCalls(calls: OpenAIToolCall[]): string {
       for (const [key, value] of Object.entries(parameters)) {
         if (typeof value === "string") {
           lines.push(
-            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="true">${value}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
+            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="true">${escapeDsmlText(value)}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
           );
         } else {
           lines.push(
-            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="false">${JSON.stringify(value)}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
+            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="false">${escapeDsmlText(JSON.stringify(value))}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
           );
         }
       }
-    } else {
+    } else if (rawArguments.length > 0) {
       // Keep unparseable arguments visible so the model can correct itself.
       lines.push(
-        `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="arguments" string="true">${call.function.arguments}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
+        `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="arguments" string="true">${escapeDsmlText(rawArguments)}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
       );
     }
 

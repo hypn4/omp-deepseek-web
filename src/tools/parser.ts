@@ -116,16 +116,7 @@ function decodeEntities(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
-function parseParameterValue(raw: string): unknown {
-  const value = decodeEntities(raw).trim();
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-function parseDsmlParameters(body: string): Record<string, unknown> {
+function parseDsmlParameters(body: string): Record<string, unknown> | null {
   // Null prototype keeps a parameter literally named `__proto__` as data.
   const args = Object.create(null) as Record<string, unknown>;
   const parameters = findTaggedBlocks(
@@ -140,11 +131,17 @@ function parseDsmlParameters(body: string): Record<string, unknown> {
     if (!name) {
       continue;
     }
-    const raw = body.slice(parameter.bodyStart, parameter.bodyEnd);
-    args[name] =
-      attributes.string === "false"
-        ? parseParameterValue(raw)
-        : decodeEntities(raw);
+    const raw = decodeEntities(body.slice(parameter.bodyStart, parameter.bodyEnd));
+    if (attributes.string === "false") {
+      try {
+        args[name] = JSON.parse(raw.trim());
+      } catch {
+        // An unparseable block must not become a tool call (spec 8.3).
+        return null;
+      }
+    } else {
+      args[name] = raw;
+    }
   }
 
   return args;
@@ -173,10 +170,14 @@ function parseDsmlCalls(text: string): ParsedToolCall[] {
         continue;
       }
       const invokeBody = body.slice(invoke.bodyStart, invoke.bodyEnd);
+      const args = parseDsmlParameters(invokeBody);
+      if (args === null) {
+        continue;
+      }
       calls.push({
         id: globalThis.crypto.randomUUID(),
         name,
-        arguments: JSON.stringify(parseDsmlParameters(invokeBody)),
+        arguments: JSON.stringify(args),
       });
     }
   }
@@ -211,18 +212,35 @@ function parseV31Call(body: string): ParsedToolCall | null {
     .split(separator)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  if (parts.length < 2) {
+
+  // Canonical V3.1 emits a literal `function` type segment before the first
+  // separator. It carries no data, so drop it before locating the tool name.
+  if (
+    parts.length > 1 &&
+    new RegExp(`^function(?:${WORD_BOUNDARY}|_|\\s)*$`).test(parts[0]!)
+  ) {
+    parts.shift();
+  }
+  if (parts.length === 0) {
     return null;
   }
 
-  const name = parts[0]!
-    .replace(new RegExp(`^function(?:${WORD_BOUNDARY}|_|\\s)+`), "")
-    .trim();
+  // The name segment is `<tool name>\n` followed by the (usually fenced)
+  // JSON body; anything after the first separator is additional argument text.
+  const nameSegment = parts[0]!;
+  const newlineIndex = nameSegment.indexOf("\n");
+  const name = (
+    newlineIndex === -1 ? nameSegment : nameSegment.slice(0, newlineIndex)
+  ).trim();
   if (!/^[A-Za-z_][\w.-]*$/.test(name)) {
     return null;
   }
 
-  const args = parseArgumentsObject(parts.slice(1).join(""));
+  const argumentParts =
+    newlineIndex === -1
+      ? parts.slice(1)
+      : [nameSegment.slice(newlineIndex + 1), ...parts.slice(1)];
+  const args = parseArgumentsObject(argumentParts.join("\n"));
   if (args === undefined) {
     return null;
   }
