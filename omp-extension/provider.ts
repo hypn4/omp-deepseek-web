@@ -226,9 +226,7 @@ export async function runDeepSeekTurn(
 
       continuations += 1;
       deps.onStatus?.("DeepSeek Web: continuing…");
-      const continuationPrompt = buildContinuationPrompt(
-        messageId === undefined ? text : undefined,
-      );
+      const continuationPrompt = buildContinuationPrompt(text);
       let continuation;
       try {
         const continuationStream = await client.complete(

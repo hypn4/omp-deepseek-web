@@ -107,19 +107,21 @@ export function mergeContinuation(existing: string, addition: string): string {
 }
 
 /**
- * Builds the follow-up prompt used to resume a truncated answer. When the
- * upstream response message id is available, the same chat session provides
- * the prior answer and no excerpt is needed. Otherwise include the tail so a
- * parent-less continuation has enough context.
+ * Builds the follow-up prompt used to resume a truncated answer. The cutoff
+ * excerpt matters even when the same chat session is available: the server may
+ * hold a complete answer while the client lost its tail, so the model must emit
+ * only the text after the cutoff rather than declaring the full message complete.
  */
 export function buildContinuationPrompt(previousText?: string): string {
   const prompt =
-    "Continue the previous answer from the exact cutoff. Output only the continuation; " +
-    "do not repeat any earlier text. If the previous answer is already complete, " +
+    "The previous answer was cut off before the user received all of it. " +
+    "The text the user already has ends with the excerpt below. Continue from " +
+    "that exact cutoff and output only the text that follows it. Do not repeat " +
+    "any text already shown. If no text follows the cutoff, " +
     `output exactly ${CONTINUATION_COMPLETE_MARKER}.`;
   if (previousText === undefined || previousText.trim() === "") {
     return prompt;
   }
   const tail = previousText.slice(-2000);
-  return `${prompt}\n\nThe answer so far:\n---\n${tail}\n---`;
+  return `${prompt}\n\nExcerpt already shown to the user:\n---\n${tail}\n---`;
 }

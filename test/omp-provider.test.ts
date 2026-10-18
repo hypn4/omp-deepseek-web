@@ -176,6 +176,7 @@ describe("DeepSeek omp provider", () => {
       thinkingEnabled: false,
       searchEnabled: false,
     });
+    expect(requests[1]?.prompt).toContain("The answer is incomplete but");
     expect(sink.failure).toBeUndefined();
     expect(sink.ended?.content).toEqual([
       { type: "text", text: "The answer is incomplete but it finishes here." },
