@@ -17,6 +17,8 @@ import type { EventSink, ModelIdentity } from "./events";
 import { StreamingCompletion } from "./events";
 import { collectTurnImages } from "./prompt";
 import type { PromptContext, PromptImage } from "./prompt";
+import type { ConversationPlanner } from "./conversation";
+import { EphemeralPlanner } from "./conversation";
 
 export interface DeepSeekClientLike {
   createSession(): Promise<string>;
@@ -49,7 +51,18 @@ export interface ProviderDeps {
   buildPrompt(context: PromptContext): string;
   onStatus?(status: string | null): void;
   requestGate?: RequestGate;
+  /** Persistent or ephemeral conversation strategy. */
+  planner?: ConversationPlanner;
+  /** Stable OMP session/subagent key for persistent mappings. */
+  scopeKey?: string;
+  /** Renders only messages after the previous turn, for session reuse. */
+  buildIncrementalPrompt?(
+    context: PromptContext,
+    startIndex: number,
+  ): string | null;
 }
+
+const EPHEMERAL_PLANNER = new EphemeralPlanner();
 
 function tokenError(error: unknown): Error {
   if (error instanceof TokenError) {
@@ -131,20 +144,47 @@ export async function runDeepSeekTurn(
     return;
   }
 
-  let prompt: string;
+  let fullPrompt: string;
   try {
-    prompt = deps.buildPrompt(context);
+    fullPrompt = deps.buildPrompt(context);
   } catch (error) {
     stream.fail(tokenError(error));
     return;
   }
+
+  const planner = deps.planner ?? EPHEMERAL_PLANNER;
+  const scopeKey = deps.scopeKey ?? "";
+  let plan;
+  try {
+    plan = planner.plan(
+      scopeKey,
+      context,
+      fullPrompt,
+      (startIndex) => deps.buildIncrementalPrompt?.(context, startIndex) ?? null,
+    );
+  } catch (error) {
+    stream.fail(tokenError(error));
+    return;
+  }
+  const prompt = plan.prompt;
+  const invalidate = (): void => {
+    if (!plan.persistent) {
+      return;
+    }
+    try {
+      planner.invalidate(scopeKey);
+    } catch {
+      // A store failure is not worth masking the turn result.
+    }
+  };
 
   const emitter = new StreamingCompletion(stream, model);
   emitter.start();
   deps.onStatus?.("DeepSeek Web: thinking…");
 
   let client: DeepSeekClientLike | null = null;
-  let sessionId: string | null = null;
+  let sessionId: string | null = plan.chatSessionId ?? null;
+  let keepSession = false;
   const signal = options.signal ?? new AbortController().signal;
 
   try {
@@ -167,7 +207,16 @@ export async function runDeepSeekTurn(
       }
     }
 
-    sessionId = await client.createSession();
+    if (sessionId === null) {
+      sessionId = await client.createSession();
+      if (plan.replacedChatSessionId !== undefined) {
+        try {
+          await client.deleteSession(plan.replacedChatSessionId);
+        } catch {
+          // Replaced native sessions are best-effort cleanup too.
+        }
+      }
+    }
 
     let lastText = "";
     let lastThinking = "";
@@ -204,6 +253,7 @@ export async function runDeepSeekTurn(
       client,
       {
         chatSessionId: sessionId,
+        parentMessageId: plan.parentMessageId,
         prompt,
         refFileIds,
         thinkingEnabled: options.thinkingEnabled ?? true,
@@ -235,6 +285,7 @@ export async function runDeepSeekTurn(
     );
 
     if (signal.aborted) {
+      invalidate();
       emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
       return;
     }
@@ -245,6 +296,23 @@ export async function runDeepSeekTurn(
       toolCalls.length > 0 ? stripToolMarkup(result.text) : result.text;
     const incomplete =
       needsNativeContinuation(result) || !result.finished;
+    if (
+      plan.persistent &&
+      !incomplete &&
+      result.messageId !== undefined &&
+      !signal.aborted
+    ) {
+      try {
+        planner.commit(scopeKey, context, sessionId, result.messageId);
+        keepSession = true;
+      } catch {
+        // A failed metadata write must not leave an unreachable chat behind.
+        invalidate();
+        keepSession = false;
+      }
+    } else if (plan.persistent) {
+      invalidate();
+    }
     emitter.finish({
       text: finalText,
       thinking: result.thinking,
@@ -255,11 +323,13 @@ export async function runDeepSeekTurn(
       incomplete ? "DeepSeek Web: truncated" : "DeepSeek Web ✓",
     );
   } catch (error) {
+    invalidate();
+    keepSession = false;
     const failure = signal.aborted ? (signal.reason ?? error) : tokenError(error);
     emitter.fail(failure);
     deps.onStatus?.("DeepSeek Web: error");
   } finally {
-    if (client !== null && sessionId !== null) {
+    if (!keepSession && client !== null && sessionId !== null) {
       try {
         await client.deleteSession(sessionId);
       } catch {

@@ -15,12 +15,89 @@ import {
 } from "../src/deepseek/options";
 import { RequestGate } from "../src/deepseek/rate-limit";
 import type { PromptContext, PromptTool } from "./prompt";
-import { buildOmpPrompt } from "./prompt";
+import { buildOmpIncrementalPrompt, buildOmpPrompt } from "./prompt";
+import type { ConversationPlanner } from "./conversation";
+import {
+  DEFAULT_SESSION_STORE_PATH,
+  DEFAULT_SESSION_TTL_MS,
+  EphemeralPlanner,
+  PersistentPlanner,
+} from "./conversation";
 import { runDeepSeekTurn } from "./provider";
 
 const PROVIDER_ID = "deepseek-web";
 const MODEL_ID = "deepseek-web";
 const BASE_URL = "https://chat.deepseek.com";
+
+const EPHEMERAL_PLANNER = new EphemeralPlanner();
+
+function createPlanner(): ConversationPlanner {
+  if (process.env.DEEPSEEK_WEB_SESSION_MODE === "ephemeral") {
+    return EPHEMERAL_PLANNER;
+  }
+  try {
+    return new PersistentPlanner({
+      path: process.env.DEEPSEEK_WEB_SESSION_STORE ?? DEFAULT_SESSION_STORE_PATH,
+      ttlMs:
+        resolveNonNegativeInt(
+          process.env.DEEPSEEK_WEB_SESSION_TTL_MS,
+          DEFAULT_SESSION_TTL_MS,
+        ),
+    });
+  } catch {
+    // A broken store must not make the provider unavailable.
+    return EPHEMERAL_PLANNER;
+  }
+}
+
+const CONVERSATION_PLANNER = createPlanner();
+
+function deleteChatSessions(records: readonly { chatSessionId: string }[]): void {
+  if (records.length === 0) {
+    return;
+  }
+  const token = readAuthValue(DEFAULT_TOKEN_PATH);
+  const deviceId = readAuthValue(DEFAULT_DEVICE_ID_PATH);
+  if (token === null || deviceId === null) {
+    return;
+  }
+  const client = createDeepSeekClient(token, deviceId);
+  for (const record of records) {
+    void client.deleteSession(record.chatSessionId).catch(() => {
+      // Session cleanup is best-effort.
+    });
+  }
+}
+
+if (CONVERSATION_PLANNER instanceof PersistentPlanner) {
+  // TTL removal only drops the local mapping; also remove abandoned chats.
+  deleteChatSessions(CONVERSATION_PLANNER.drainExpired());
+}
+
+function createDeepSeekClient(
+  token: string,
+  deviceId: string,
+): DeepSeekClient {
+  return new DeepSeekClient({
+    baseUrl: BASE_URL,
+    token,
+    deviceId,
+    tokenCommand: process.env.DEEPSEEK_WEB_TOKEN_CMD,
+    platform: process.env.DEEPSEEK_WEB_PLATFORM ?? "android",
+    clientVersion: process.env.DEEPSEEK_WEB_CLIENT_VERSION ?? "2.6.2",
+    bundleId: process.env.DEEPSEEK_WEB_BUNDLE_ID ?? "com.deepseek.chat.nov",
+    deviceModel: process.env.DEEPSEEK_WEB_DEVICE_MODEL ?? "Android",
+  });
+}
+
+/** Title generation and compaction are utility calls, not main chat turns. */
+function isUtilityCall(context: PromptContext): boolean {
+  const system = (context.systemPrompt ?? []).join("\n");
+  if (system.includes("Output only the title wrapped in `<title>`")) {
+    return true;
+  }
+  return (context.tools?.length ?? 0) === 0;
+}
 
 function ensureDeviceId(): string | null {
   const stored = readAuthValue(DEFAULT_DEVICE_ID_PATH);
@@ -72,7 +149,21 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (_event, ctx) => {
     refreshStatus(ctx);
   });
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
+    // Subagent/task chats are task-scoped: delete them when the task ends.
+    // The main chat is kept so its mapping survives across turns/restarts.
+    if (ctx.agent.kind === "sub") {
+      const scopeKey = ctx.sessionManager.getSessionId();
+      let record;
+      try {
+        record = CONVERSATION_PLANNER.remove(scopeKey);
+      } catch {
+        record = undefined;
+      }
+      if (record !== undefined) {
+        deleteChatSessions([record]);
+      }
+    }
     activeContext = undefined;
   });
 
@@ -101,20 +192,18 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
         {
           readToken: () => readAuthValue(DEFAULT_TOKEN_PATH),
           readDeviceId: ensureDeviceId,
-          createClient: (token, deviceId) =>
-            new DeepSeekClient({
-              baseUrl: BASE_URL,
-              token,
-              deviceId,
-              tokenCommand: process.env.DEEPSEEK_WEB_TOKEN_CMD,
-              platform: process.env.DEEPSEEK_WEB_PLATFORM ?? "android",
-              clientVersion: process.env.DEEPSEEK_WEB_CLIENT_VERSION ?? "2.6.2",
-              bundleId: process.env.DEEPSEEK_WEB_BUNDLE_ID ?? "com.deepseek.chat.nov",
-              deviceModel: process.env.DEEPSEEK_WEB_DEVICE_MODEL ?? "Android",
-            }),
+          createClient: createDeepSeekClient,
           buildPrompt: promptFor,
+          buildIncrementalPrompt: buildOmpIncrementalPrompt,
           onStatus: setStatus,
           requestGate,
+          planner: isUtilityCall(context as unknown as PromptContext)
+            ? EPHEMERAL_PLANNER
+            : CONVERSATION_PLANNER,
+          scopeKey:
+            activeContext?.sessionManager.getSessionId() ??
+            options?.sessionId ??
+            "",
         },
         { api: model.api, provider: model.provider, id: model.id },
         context as unknown as PromptContext,

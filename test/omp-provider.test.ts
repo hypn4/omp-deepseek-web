@@ -10,6 +10,8 @@ import type {
 import { runDeepSeekTurn } from "../omp-extension/provider";
 import type { ProviderDeps } from "../omp-extension/provider";
 import type { PromptContext } from "../omp-extension/prompt";
+import { PersistentPlanner } from "../omp-extension/conversation";
+import type { ConversationPlanner } from "../omp-extension/conversation";
 import type { EventSink, ModelIdentity } from "../omp-extension/events";
 
 const PIPE = String.fromCharCode(0xff5c);
@@ -147,8 +149,13 @@ function providerDeps(options: {
   onResume?: (request: DeepSeekResumeRequest) => void;
   onUpload?: (file: { data: Uint8Array; name: string; mimeType: string }) => void;
   onWait?: (id: string) => void;
+  planner?: ConversationPlanner;
+  scopeKey?: string;
+  buildIncrementalPrompt?: (context: PromptContext, startIndex: number) => string | null;
+  sessionIds?: string[];
 }): ProviderDeps {
   let uploadCount = 0;
+  let sessionCount = 0;
   const responses = options.responses === undefined ? undefined : [...options.responses];
   const continueResponses =
     options.continueResponses === undefined ? undefined : [...options.continueResponses];
@@ -156,7 +163,9 @@ function providerDeps(options: {
     options.resumeResponses === undefined ? undefined : [...options.resumeResponses];
   const client: FakeClient = {
     async createSession() {
-      return "session-1";
+      const id = options.sessionIds?.[sessionCount] ?? "session-1";
+      sessionCount += 1;
+      return id;
     },
     async complete(request) {
       options.onComplete?.(request);
@@ -194,6 +203,11 @@ function providerDeps(options: {
     readDeviceId: () => "device-1",
     createClient: () => client,
     buildPrompt: () => "rendered prompt",
+    ...(options.planner === undefined ? {} : { planner: options.planner }),
+    ...(options.scopeKey === undefined ? {} : { scopeKey: options.scopeKey }),
+    ...(options.buildIncrementalPrompt === undefined
+      ? {}
+      : { buildIncrementalPrompt: options.buildIncrementalPrompt }),
   };
 }
 
@@ -226,6 +240,107 @@ describe("DeepSeek omp provider", () => {
     expect(sink.failure).toBeUndefined();
     expect(sink.ended?.content).toEqual([{ type: "text", text: "hello" }]);
     expect(sink.ended?.stopReason).toBe("stop");
+    expect(deleted).toEqual(["session-1"]);
+  });
+
+  test("reuses a persistent session and sends an incremental prompt", async () => {
+    const completes: DeepSeekCompletionRequest[] = [];
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [
+        { text: "one", messageId: 2 },
+        { text: "two", messageId: 4 },
+      ],
+      planner,
+      scopeKey: "scope-1",
+      buildIncrementalPrompt: (_context, startIndex) => `DELTA:${startIndex}`,
+      onComplete: (request) => completes.push(request),
+      onDelete: (id) => deleted.push(id),
+    });
+
+    await run(deps, { messages: [{ role: "user", content: "hello" }] });
+    await run(deps, {
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: [{ type: "text", text: "one" }] },
+        { role: "user", content: "again" },
+      ],
+    });
+
+    expect(completes).toHaveLength(2);
+    expect(completes[0]).toMatchObject({
+      chatSessionId: "session-1",
+      prompt: "rendered prompt",
+    });
+    expect(completes[0]?.parentMessageId).toBeUndefined();
+    expect(completes[1]).toMatchObject({
+      chatSessionId: "session-1",
+      parentMessageId: 2,
+      prompt: "DELTA:2",
+    });
+    expect(deleted).toEqual([]);
+  });
+
+  test("resets and deletes the old session when the context changed", async () => {
+    const deleted: string[] = [];
+    const completes: DeepSeekCompletionRequest[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [
+        { text: "one", messageId: 2 },
+        { text: "two", messageId: 4 },
+      ],
+      sessionIds: ["session-1", "session-2"],
+      planner,
+      scopeKey: "scope-1",
+      onComplete: (request) => completes.push(request),
+      onDelete: (id) => deleted.push(id),
+    });
+
+    await run(deps, { messages: [{ role: "user", content: "hello" }] });
+    await run(deps, {
+      messages: [
+        { role: "user", content: "edited" },
+        { role: "assistant", content: [{ type: "text", text: "one" }] },
+        { role: "user", content: "again" },
+      ],
+    });
+
+    expect(completes[1]).toMatchObject({
+      chatSessionId: "session-2",
+      prompt: "rendered prompt",
+    });
+    expect(deleted).toContain("session-1");
+  });
+
+  test("keeps a new persistent session only after a successful turn", async () => {
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [{ text: "one", messageId: 2 }],
+      planner,
+      scopeKey: "scope-1",
+      onDelete: (id) => deleted.push(id),
+    });
+
+    await run(deps, { messages: [{ role: "user", content: "hello" }] });
+    expect(deleted).toEqual([]);
+  });
+
+  test("deletes and invalidates a persistent session on failure", async () => {
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [{ text: "one", messageId: 2 }],
+      planner,
+      scopeKey: "scope-1",
+      completeError: new Error("upstream failed"),
+      onDelete: (id) => deleted.push(id),
+    });
+
+    const sink = await run(deps, { messages: [{ role: "user", content: "hello" }] });
+    expect(sink.failure).toBeDefined();
     expect(deleted).toEqual(["session-1"]);
   });
 

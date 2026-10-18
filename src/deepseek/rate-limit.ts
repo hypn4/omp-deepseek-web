@@ -112,8 +112,8 @@ export function retryAfterFromHeaders(headers: Headers): number | undefined {
       continue;
     }
     const numeric = Number(value);
+    const now = Date.now();
     if (Number.isFinite(numeric) && numeric > 0) {
-      const now = Date.now();
       if (numeric > 1_000_000_000_000) {
         return Math.max(0, numeric - now);
       }

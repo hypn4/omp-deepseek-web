@@ -1,5 +1,6 @@
 import type { OpenAIMessage, OpenAITool, OpenAIToolCall } from "../src/openai/types";
 import { buildPrompt } from "../src/openai/translate";
+import { renderToolResults } from "../src/tools/render";
 
 export interface PromptTextPart {
   type: "text";
@@ -136,6 +137,62 @@ export function collectTurnImages(context: PromptContext): PromptImage[] {
   return images;
 }
 
+function toAssistantMessage(
+  content: Array<PromptTextPart | PromptThinkingPart | PromptToolCall>,
+): OpenAIMessage {
+  const text: string[] = [];
+  const toolCalls: OpenAIToolCall[] = [];
+  for (const part of content) {
+    if (part.type === "text") {
+      text.push(part.text);
+    } else if (part.type === "toolCall") {
+      toolCalls.push(toToolCall(part));
+    }
+  }
+  return {
+    role: "assistant",
+    content: text.join(""),
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+  };
+}
+
+/**
+ * Converts only the messages after `startIndex` into a continuation prompt.
+ * The native DeepSeek session already contains the system/tool block and the
+ * prior transcript, so this prompt must not repeat either one.
+ *
+ * Returns null when the new slice contains a developer message (which belongs
+ * in the system prompt) or cannot be rendered safely; callers then reset to a
+ * fresh session with the full prompt.
+ */
+export function buildOmpIncrementalPrompt(
+  context: PromptContext,
+  startIndex: number,
+): string | null {
+  const messages: OpenAIMessage[] = [];
+  for (const message of context.messages.slice(startIndex)) {
+    switch (message.role) {
+      case "developer":
+        return null;
+      case "user":
+        messages.push({ role: "user", content: textContent(message.content) });
+        break;
+      case "assistant":
+        messages.push(toAssistantMessage(message.content));
+        break;
+      case "toolResult":
+        messages.push({
+          role: "tool",
+          tool_call_id: message.toolCallId,
+          name: message.toolName,
+          content: textContent(message.content),
+        });
+        break;
+    }
+  }
+  return renderToolResults(messages);
+}
+
 /**
  * Converts omp's canonical conversation into the single DeepSeek prompt.
  * The OpenAI-shaped intermediate keeps the existing tool renderer and parser
@@ -156,23 +213,9 @@ export function buildOmpPrompt(
       case "user":
         messages.push({ role: "user", content: textContent(message.content) });
         break;
-      case "assistant": {
-        const text: string[] = [];
-        const toolCalls: OpenAIToolCall[] = [];
-        for (const part of message.content) {
-          if (part.type === "text") {
-            text.push(part.text);
-          } else if (part.type === "toolCall") {
-            toolCalls.push(toToolCall(part));
-          }
-        }
-        messages.push({
-          role: "assistant",
-          content: text.join(""),
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        });
+      case "assistant":
+        messages.push(toAssistantMessage(message.content));
         break;
-      }
       case "toolResult":
         messages.push({
           role: "tool",

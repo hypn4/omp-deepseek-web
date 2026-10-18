@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildOmpPrompt, collectTurnImages } from "../omp-extension/prompt";
+import {
+  buildOmpIncrementalPrompt,
+  buildOmpPrompt,
+  collectTurnImages,
+} from "../omp-extension/prompt";
 
 type TextPart = { type: "text"; text: string };
 type ImagePart = { type: "image"; data: string; mimeType: string };
@@ -157,6 +161,46 @@ describe("omp prompt adapter", () => {
     expect(result).toContain("### custom_tool_7");
     expect(result).toContain("A dynamically supplied tool");
     expect(result).not.toContain("web_search");
+  });
+
+  test("builds a delta prompt without repeating the system/tool block", () => {
+    const result = buildOmpIncrementalPrompt(
+      {
+        systemPrompt: ["system"],
+        tools: [READ_TOOL],
+        messages: [
+          { role: "user", content: "old" },
+          { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "read",
+            content: [{ type: "text", text: "contents" }],
+            isError: false,
+          },
+        ],
+      },
+      2,
+    );
+    expect(result).toContain("Tool result for read (call call-1):\ncontents");
+    expect(result).toContain("Continue the task using the tool results above.");
+    expect(result).not.toContain("system");
+    expect(result).not.toContain("old answer");
+    expect(result).not.toContain("### read");
+  });
+
+  test("refuses a delta containing a developer message", () => {
+    expect(
+      buildOmpIncrementalPrompt(
+        {
+          messages: [
+            { role: "user", content: "old" },
+            { role: "developer", content: "new instruction" },
+          ],
+        },
+        1,
+      ),
+    ).toBeNull();
   });
 
   test("collects images from the latest turn only", () => {

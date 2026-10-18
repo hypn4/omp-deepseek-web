@@ -23,6 +23,11 @@ repository and plugin package name changed.
   `/api/v0/chat/resume_stream`; no browser or text-heuristic fallback
 - Native DeepSeek search and dynamically supplied OMP tools (including
   `web_search`) can be used together
+- Persistent native chat sessions for the main conversation: the first turn
+  sends the full prompt, later turns send only the new user/tool messages with
+  `parent_message_id`
+- Task-scoped persistent sessions for subagents; `DEEPSEEK_WEB_SESSION_MODE=ephemeral`
+  restores per-turn create/delete behavior
 - Keeps the latest user message's language even when search results or tool
   output are in another language
 - Text and image input (PNG, JPEG, WebP, GIF)
@@ -57,6 +62,7 @@ flowchart LR
 - [`omp-extension/`](./omp-extension) registers the provider, maps omp events,
   handles native completion recovery, and bridges text tool calls. Tool
   definitions come from omp's live context; there is no fixed tool allowlist.
+  `conversation.ts` selects the ephemeral or persistent session strategy.
 - [`extension/`](./extension) reads the token from the DeepSeek web app and sends
   it to a native messaging host.
 - [`extension/native-host/`](./extension/native-host) writes the token and device
@@ -171,6 +177,47 @@ omp --no-extensions \
   -p "Reply with exactly: OK"
 ```
 
+## Session persistence
+
+By default the main omp conversation keeps one native DeepSeek chat session:
+
+```text
+first turn:  full system + tools + transcript
+             -> create chat_session, save parent response_message_id
+
+later turn:  only new user/tool messages
+             -> same chat_session_id + parent_message_id
+```
+
+This is safe because the provider verifies that the omp context is an exact
+prefix extension. It starts a new chat and sends the full prompt when any of
+these changes:
+
+- omp compaction, rewind, edit, or branch
+- system prompt or tool schema change
+- a turn fails, is aborted, or has no response message id
+
+If a stored native session becomes invalid, that turn fails and its mapping is
+invalidated; the next turn starts a fresh full-prompt session.
+
+Subagent/task sessions use the same strategy only for their own lifetime and are
+deleted in `session_shutdown`. Title generation, compaction, and other
+tool-less utility calls always use an ephemeral session, so they cannot replace
+the main chat mapping.
+
+Mappings contain only chat/message ids and hashes; no prompt text or tool output
+is stored. They live in `~/.omp/agent/deepseek-web-sessions.json` with mode
+`0600`. Unused mappings expire after `DEEPSEEK_WEB_SESSION_TTL_MS` (7 days), and
+their native chats are deleted best-effort.
+
+To restore the old behavior:
+
+```bash
+DEEPSEEK_WEB_SESSION_MODE=ephemeral
+```
+
+In ephemeral mode every provider call creates and deletes its own DeepSeek chat.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -185,6 +232,9 @@ omp --no-extensions \
 | `DEEPSEEK_WEB_RATE_LIMIT_RETRIES` | `2` | Retry a rate-limit hint only when no text/thinking was emitted. |
 | `DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS` | `10000` | Initial backoff; doubles per retry (10s, 20s, ...). |
 | `DEEPSEEK_WEB_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum spacing between requests from this process, shared across sessions and tool loops. |
+| `DEEPSEEK_WEB_SESSION_MODE` | `persistent` | `persistent` reuses one native chat per omp conversation; `ephemeral` creates and deletes a chat per provider call. |
+| `DEEPSEEK_WEB_SESSION_STORE` | `~/.omp/agent/deepseek-web-sessions.json` | Owner-only mapping file for persistent sessions. |
+| `DEEPSEEK_WEB_SESSION_TTL_MS` | `604800000` | Drop unused mappings after 7 days; their native chats are deleted best-effort. |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
 The token and device id are stored at:
@@ -210,6 +260,10 @@ bun extension/install.ts --uninstall
 - Prompts, images, and tool results are sent to `chat.deepseek.com` as part of
   normal inference. Do not use the provider for data you would not share with
   DeepSeek.
+- In the default `persistent` mode the main conversation is retained as a
+  native DeepSeek chat so later turns can continue it. Use
+  `DEEPSEEK_WEB_SESSION_MODE=ephemeral` if you want each provider call deleted
+  immediately. Subagent chats are deleted when the task ends.
 - Image input uploads the current turn's images to DeepSeek. Older history images
   are not re-uploaded.
 
@@ -233,7 +287,8 @@ bun extension/install.ts --uninstall
   parsed from a prompted format and can break if the model or hidden system
   prompt changes.
 - **Images are per-turn.** Uploads and parsing failures surface as the turn
-  error.
+  error. Persistent native history may retain earlier uploaded images according
+  to DeepSeek's own retention behavior.
 - **Single account.** One token and one device id are stored; there is no
   multi-account rotation.
 - **No usage or cost reporting.** omp sees zero usage/cost.
