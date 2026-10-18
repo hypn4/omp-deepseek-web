@@ -1,12 +1,9 @@
 {
   "manifest_version": 3,
   "name": "DeepSeek Web Token Bridge",
-  "version": "1.0.0",
-  "description": "Sends the chat.deepseek.com session token to the local omp proxy.",
-  "permissions": [],
-  "host_permissions": [
-    "http://127.0.0.1:8787/*"
-  ],
+  "version": "2.0.0",
+  "description": "Sends the chat.deepseek.com session token to omp through native messaging.",
+  "permissions": ["nativeMessaging"],
   "background": {
     "service_worker": "background.js"
   },

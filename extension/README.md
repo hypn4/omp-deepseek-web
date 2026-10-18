@@ -1,44 +1,48 @@
 # DeepSeek Web Token Bridge
 
-A tiny Manifest V3 extension that forwards the `chat.deepseek.com` session token
-to the local `deepseek-web` proxy.
+A Manifest V3 extension that forwards the `chat.deepseek.com` session token and
+device id to omp through a Chrome native messaging host.
 
 ## Why
 
 The DeepSeek web app stores its bearer token in `localStorage.userToken`. This
-extension reads that value and posts it to `http://127.0.0.1:8787/login/token`.
-The proxy keeps it in `~/.omp/agent/deepseek-web-token` with mode `0600` and uses
-it for upstream requests. No Google OAuth redirect, custom URL scheme, or CDP is
-involved.
+extension reads that value and sends it to a small native host on demand. The
+host writes `~/.omp/agent/deepseek-web-token` and
+`~/.omp/agent/.deepseek-web-device-id` with mode `0600`. There is no HTTP
+listener, proxy process, Google OAuth redirect, custom URL scheme, or CDP.
 
 ## Install
 
-1. Start the proxy: `bun run start` (from the repository root).
-2. Open `chrome://extensions`.
-3. Turn on **Developer mode**.
-4. Click **Load unpacked** and select this `extension/` directory.
-5. Open <https://chat.deepseek.com> and sign in normally.
-6. Check that the proxy received the token:
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and select this `extension/` directory.
+4. Copy the extension ID shown on its card.
+5. Install the native host from the repository root:
 
    ```bash
-   curl -s http://127.0.0.1:8787/login/status
-   # {"hasToken":true}
+   bun extension/install.ts --extension-id <extension-id>
    ```
 
-The content script polls every 5 seconds and re-sends the token when it changes
-or every 30 seconds as a heartbeat. If the web app rotates the token, the proxy
-is updated automatically.
+   Add `--browser chromium|edge|brave` if you are not using Chrome.
+6. Reload the extension (or restart Chrome) so it reconnects to the new host.
+7. Open <https://chat.deepseek.com> and sign in normally.
+8. Check that omp can see the token:
+
+   ```bash
+   omp --no-extensions -e omp-extension/index.ts \
+     --model deepseek-web/deepseek-web -p "Reply with exactly: OK"
+   ```
+
+The content script polls localStorage every 5 seconds and sends only when the
+token or device id changes. A failed send retries on the next tick. If the web
+app rotates the token, the file is updated automatically.
 
 ## Permissions
 
+- `nativeMessaging` — send the token to the local host.
 - The content script runs on `https://chat.deepseek.com/*` (declared in
   `content_scripts.matches`) and reads `localStorage.userToken` and
   `deepseek-device-id:chat`.
-- `http://127.0.0.1:8787/*` — POST the token to the local proxy.
 
-If you change `DEEPSEEK_WEB_PORT`, update `PROXY_URL` in `background.js` and the
-host permission in `manifest.json` to match; they are intentionally fixed to the
-default proxy port.
-
-The token is only sent to loopback. It is never logged by the extension or the
-proxy. The proxy stores it with owner-only permissions.
+The token is never logged by the extension, the native host, or omp. The native
+host only writes owner-only files; it does not open a network connection.

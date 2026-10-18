@@ -1,52 +1,69 @@
 // Reads the chat.deepseek.com session token and device id from localStorage and
-// forwards them to the local proxy through the background service worker.
+// forwards them to the native messaging host through the background worker.
 (() => {
   const TOKEN_KEY = "userToken";
   const DEVICE_KEY = "deepseek-device-id:chat";
-  const HEARTBEAT_MS = 30_000;
-  let lastToken = "";
-  let lastSentAt = 0;
+  const POLL_MS = 5_000;
 
-  function readToken() {
+  let lastToken = null;
+  let lastDeviceId = null;
+  let inFlight = false;
+
+  function readValue(key) {
     try {
-      const raw = localStorage.getItem(TOKEN_KEY);
-      if (raw === null || raw === "") return null;
+      const raw = localStorage.getItem(key);
+      if (raw === null || raw.trim() === "") return null;
       try {
         const parsed = JSON.parse(raw);
-        if (typeof parsed?.value === "string" && parsed.value !== "") {
-          return parsed.value;
+        if (typeof parsed === "string") {
+          return parsed.trim() || null;
+        }
+        if (parsed !== null && typeof parsed === "object" && typeof parsed.value === "string") {
+          return parsed.value.trim() || null;
         }
       } catch {
-        // Older or hand-written values may be the token itself.
+        // Older or hand-written values may be the value itself.
       }
-      return raw;
+      return raw.trim();
     } catch {
       return null;
     }
   }
 
   function sync() {
-    const token = readToken();
-    if (token === null) return;
-    const now = Date.now();
-    if (token === lastToken && now - lastSentAt < HEARTBEAT_MS) return;
-    lastToken = token;
-    lastSentAt = now;
-    const deviceId = localStorage.getItem(DEVICE_KEY) || undefined;
+    const token = readValue(TOKEN_KEY);
+    if (token === null) {
+      lastToken = null;
+      lastDeviceId = null;
+      return;
+    }
+
+    const deviceId = readValue(DEVICE_KEY);
+    if (token === lastToken && deviceId === lastDeviceId) return;
+    if (inFlight) return;
+
+    inFlight = true;
     try {
       chrome.runtime.sendMessage(
-        { type: "deepseek-token", token, deviceId },
+        { type: "deepseek-token", token, deviceId: deviceId ?? undefined },
         (response) => {
+          inFlight = false;
           if (chrome.runtime.lastError || response?.ok !== true) {
-            lastSentAt = 0;
+            lastToken = null;
+            lastDeviceId = null;
+            return;
           }
+          lastToken = token;
+          lastDeviceId = deviceId;
         },
       );
     } catch {
-      lastSentAt = 0;
+      inFlight = false;
+      lastToken = null;
+      lastDeviceId = null;
     }
   }
 
   sync();
-  setInterval(sync, 5_000);
+  setInterval(sync, POLL_MS);
 })();
