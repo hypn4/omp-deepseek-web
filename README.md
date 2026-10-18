@@ -1,77 +1,93 @@
 # deepseek-web
 
-Use a free `chat.deepseek.com` web account as an [omp](https://github.com/can1357/oh-my-pi)
-provider without running a local proxy.
+Use a free [chat.deepseek.com](https://chat.deepseek.com) account as an
+[omp](https://github.com/can1357/oh-my-pi) provider.
+
+The provider runs inside omp as a command-backed extension. There is no local
+HTTP proxy, port, or model gateway.
+
+> **Unofficial.** This project is not affiliated with DeepSeek. The web API is
+> undocumented and may change without notice. Automated use of free web chat may
+> violate DeepSeek's terms or hit rate limits. Use your own account and use it at
+> your own risk.
+
+## Features
+
+- `deepseek-web/deepseek-web` model in omp
+- DeepThink and web search enabled by default
+- Text and image input (PNG, JPEG, WebP, GIF)
+- omp tools (`read`, `edit`, `write`, `bash`, …) through a text tool-call bridge
+- Chrome native-messaging token bridge with owner-only token files
+- No local HTTP server
+
+## Requirements
+
+- [Bun](https://bun.sh) 1.x
+- `omp` 18.x
+- A free DeepSeek chat account
+- Chrome or another Chromium browser for the token bridge
+
+The bundled native-host installer targets macOS Chrome-family paths. On other
+platforms, adapt [`extension/install.ts`](./extension/install.ts).
+
+## Architecture
 
 ```mermaid
 flowchart LR
   A[chat.deepseek.com] --> B[Chrome extension]
   B --> C[native messaging host]
   C --> D[token files 0600]
-  E[omp session] --> F[deepseek-web omp extension]
+  E[omp session] --> F[deepseek-web extension]
   F --> D
   F --> G[DeepSeek web API]
   F --> H[omp tools]
 ```
 
-- `omp-extension/` registers a command-backed `deepseek-web` provider. It calls
-  the DeepSeek web API in-process and bridges DSML/V3.1 text tool calls to omp's
-  `read`, `edit`, `bash`, and other tools.
-- `extension/` is a Chrome MV3 extension. It reads `localStorage.userToken` and
-  `deepseek-device-id:chat`, then sends them to a native messaging host.
-- `extension/native-host/` writes `~/.omp/agent/deepseek-web-token` and
-  `~/.omp/agent/.deepseek-web-device-id` with mode `0600`. There is no HTTP
-  listener and no proxy process.
-
-The DeepSeek web API is **unofficial and may change without notice**. Use your
-own account and treat this as a personal convenience, not a supported API.
-
-## Requirements
-
-- [Bun](https://bun.sh) 1.x (the only runtime; there are no npm dependencies)
-- `omp` 18.x
-- A free DeepSeek chat account
-- Chrome or another Chromium browser
-
-The native host installer currently writes macOS Chrome-family paths.
+- [`omp-extension/`](./omp-extension) registers the command-backed provider and
+  bridges DeepSeek text tool calls to omp.
+- [`extension/`](./extension) reads the token from the DeepSeek web app and sends
+  it to a native messaging host.
+- [`extension/native-host/`](./extension/native-host) writes the token and device
+  id to `~/.omp/agent` with mode `0600`.
+- [`src/deepseek/`](./src/deepseek) contains the web transport, PoW solver, and
+  SSE parser.
+- [`src/tools/`](./src/tools) contains the prompt renderer and tool-call parser.
 
 ## Install
 
+Clone the repository and verify the test suite:
+
 ```bash
-git clone <this-repo> deepseek-web
+git clone <your-repository-url> deepseek-web
 cd deepseek-web
 bun install
+bun test
 ```
 
-There are no runtime dependencies: the provider uses Bun built-ins (`fetch`,
-`crypto`, `WebAssembly`) and omp's host packages.
+There are no runtime npm dependencies; the provider uses Bun built-ins and omp's
+host packages.
 
 ### 1. Install the Chrome bridge
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked** and select the `extension/` directory.
-4. Copy the extension ID from its card.
+4. Copy the extension ID shown on the extension card.
 5. Install the native host:
 
    ```bash
    bun extension/install.ts --extension-id <extension-id>
    ```
 
-   Use `--browser chromium|edge|brave` if needed.
+   For Chromium, Edge, or Brave, add
+   `--browser chromium|edge|brave`.
 6. Reload the extension (or restart Chrome).
 7. Open <https://chat.deepseek.com> and sign in normally.
 
-The content script polls every 5 seconds and sends the token only when it
-changes. A failed send retries on the next tick. The host writes the files
-atomically with owner-only permissions.
-
-Verify the files exist without printing the token:
-
-```bash
-test -s ~/.omp/agent/deepseek-web-token && echo token-present
-test -s ~/.omp/agent/.deepseek-web-device-id && echo device-present
-```
+The extension sends the token only when it changes; a failed send retries on the
+next poll. The status badge is `✓` when synced, `…` while syncing, and `!` when a
+token or native-host error needs attention. Click the icon to open the status
+popup.
 
 ### 2. Load the omp extension
 
@@ -79,19 +95,18 @@ Add the absolute path to `~/.omp/agent/config.yml`:
 
 ```yaml
 extensions:
-  - /absolute/path/to/deepseek-web/omp-extension/index.ts
+  - /path/to/deepseek-web/omp-extension/index.ts
 ```
 
 `extensions` replaces the array from lower-precedence settings, so keep any
-existing entries in the same list. Alternatively load it per session:
+existing entries in the same list. To load it for one session instead:
 
 ```bash
-omp -e /absolute/path/to/deepseek-web/omp-extension/index.ts \
+omp -e /path/to/deepseek-web/omp-extension/index.ts \
   --model deepseek-web/deepseek-web
 ```
 
-No `models.yml` provider entry is needed; the extension registers
-`deepseek-web/deepseek-web` itself.
+No `models.yml` entry is required; the extension registers the model itself.
 
 ### 3. Run
 
@@ -99,7 +114,7 @@ No `models.yml` provider entry is needed; the extension registers
 omp --model deepseek-web/deepseek-web
 ```
 
-To make it the default, set it in `~/.omp/agent/config.yml`:
+To make it the default, set:
 
 ```yaml
 modelRoles:
@@ -110,32 +125,27 @@ Quick non-interactive check:
 
 ```bash
 omp --no-extensions \
-  -e /absolute/path/to/deepseek-web/omp-extension/index.ts \
+  -e /path/to/deepseek-web/omp-extension/index.ts \
   --model deepseek-web/deepseek-web \
   -p "Reply with exactly: OK"
 ```
 
-Then try "Read README.md and summarize the first section". The `read` tool card
-should appear and the model should produce a summary.
-
 ## Configuration
 
-The provider currently uses:
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DEEPSEEK_WEB_THINKING` | `1` | Enable DeepThink. Set `0` to disable. |
+| `DEEPSEEK_WEB_SEARCH` | `1` | Enable web search. Set `0` to disable. |
+| `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
-- Base URL: `https://chat.deepseek.com`
-- Thinking: on by default, including tool turns. The provider instructs the
-  model to put the complete tool block in the final RESPONSE.
-- Web search: on by default.
-- Set `DEEPSEEK_WEB_THINKING=0` or `DEEPSEEK_WEB_SEARCH=0` to disable either.
-- Inputs: text and images (PNG, JPEG, WebP, GIF). Images in the latest user
-  turn, and tool-result images produced while handling it, are uploaded to
-  `chat.deepseek.com` and referenced by `ref_file_ids`. Older history images are
-  not re-uploaded.
-- Model metadata: 128k context, 8k output (estimates)
+The token and device id are stored at:
 
-`DEEPSEEK_WEB_TOKEN_CMD` is an optional advanced fallback. When a request gets
-`40003 INVALID_TOKEN`, the client can run the command and use its stdout as the
-new token. The Chrome bridge normally updates the token first.
+```text
+~/.omp/agent/deepseek-web-token
+~/.omp/agent/.deepseek-web-device-id
+```
+
+Both files are written atomically with mode `0600`.
 
 To remove the native host:
 
@@ -143,39 +153,51 @@ To remove the native host:
 bun extension/install.ts --uninstall
 ```
 
-## Known limitations
+## Security and privacy
 
-- **Unofficial protocol and ToS.** Automated use of free web chat may violate
-  DeepSeek's terms or hit rate limits, and endpoints/PoW may change at any time.
-  Use at your own risk and with your own account.
-- **Buffered streaming.** The provider collects the full upstream response before
-  emitting omp events; text does not appear incrementally.
-- **Image support is per-turn.** Current-turn images are uploaded through
-  `POST /api/v0/file/upload_file` and referenced with `ref_file_ids`; images
-  from older history are not re-uploaded. Upload/parse failures surface as the
-  turn error.
-- **Tool-call format risk.** DeepSeek web has no native tool calling. The provider
-  prompts for DSML (with a V3.1 fallback parser). Thinking mode sometimes omits
-  the leading bar before `DSML` in the outer `tool_calls` tag; the parser accepts
-  that variant. Other hidden-prompt or model changes can still break the
-  convention, in which case malformed blocks remain ordinary text.
-- **Single account.** One token and one device id are stored. There is no
+- The token is sent from the Chrome extension to a local native messaging host,
+  never over a network listener.
+- The token is never displayed in the popup or written to logs.
+- Prompts, images, and tool results are sent to `chat.deepseek.com` as part of
+  normal inference. Do not use the provider for data you would not share with
+  DeepSeek.
+- Image input uploads the current turn's images to DeepSeek. Older history images
+  are not re-uploaded.
+
+## Limitations
+
+- **Unofficial web API.** Endpoints, PoW, response shapes, and tool-call behavior
+  can change at any time.
+- **Buffered streaming.** The provider collects the complete upstream response
+  before emitting omp events; text is not incremental.
+- **Text tool bridge.** DeepSeek web has no native tool calling. Tool calls are
+  parsed from a prompted format and can break if the model or hidden system
+  prompt changes.
+- **Images are per-turn.** Uploads and parsing failures surface as the turn
+  error.
+- **Single account.** One token and one device id are stored; there is no
   multi-account rotation.
-- **No usage reporting.** omp sees zero cost/usage; the 128k context window is an
-  estimate, not a measured limit.
-- **Native host dependency.** The token is read from `localStorage.userToken`.
-  If DeepSeek changes that key or the page storage layout, update
-  `extension/content.js`. If the repository moves, rerun the installer.
+- **No usage or cost reporting.** omp sees zero usage/cost, and context limits
+  are estimates.
+
+## Development
+
+```bash
+bun test
+```
+
+The test suite covers the web transport, SSE parser, tool bridge, image upload,
+omp provider, Chrome extension messaging, and native-host protocol.
 
 ## Vendored PoW solver
 
-`vendor/sha3_wasm_bg.wasm` is required to solve DeepSeek's `DeepSeekHashV1`
+`vendor/sha3_wasm_bg.wasm` solves DeepSeek's `DeepSeekHashV1` proof-of-work
 challenge.
 
 - Source: `https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm`
 - Size: 26,612 bytes
 - SHA-256: `b3fca8cc072c1defbd60c02266a8e48bd307a1804aaff4314900aea720e72f7d`
 
-The file is checked in because the provider loads it from disk instead of
-fetching it at runtime. If DeepSeek rotates the asset, verify the new file's hash
-and update this section.
+## License
+
+No license has been added yet. Add one before distributing the project.
