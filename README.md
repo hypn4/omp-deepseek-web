@@ -106,6 +106,10 @@ popup.
 omp plugin install github:hypn4/omp-deepseek-web
 ```
 
+> The GitHub shorthand requires public repository access. While this repository
+> is private, clone it and use `omp plugin link` below instead. Once the
+> repository is public, the command above works without extra setup.
+
 This is the primary installation path. The plugin manifest loads
 `omp-extension/index.ts`, so no `models.yml` entry or manual `extensions:` edit
 is required. Manage it with `omp plugin list`, `omp plugin upgrade omp-deepseek-web`,
