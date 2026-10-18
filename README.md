@@ -181,6 +181,7 @@ omp --no-extensions \
 | `DEEPSEEK_WEB_CLIENT_VERSION` | `2.6.2` | Native client version header. |
 | `DEEPSEEK_WEB_BUNDLE_ID` | `com.deepseek.chat.nov` | Native client bundle id header. |
 | `DEEPSEEK_WEB_DEVICE_MODEL` | `Android` | Native device-model header. |
+| `DEEPSEEK_WEB_CONTEXT_WINDOW` | `61440` | Conservative web-client history/file token limit; the model's API limit is larger. |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
 The token and device id are stored at:
@@ -232,8 +233,14 @@ bun extension/install.ts --uninstall
   error.
 - **Single account.** One token and one device id are stored; there is no
   multi-account rotation.
-- **No usage or cost reporting.** omp sees zero usage/cost, and context limits
-  are estimates.
+- **No usage or cost reporting.** omp sees zero usage/cost.
+- **Context window is the web-client limit, not the model maximum.** The
+  Android/web client default for `normal_history_and_file_token_limit` is
+  61,440 tokens. DeepSeek's API documents a much larger model context (V4.1
+  Flash: 1M), and older API V3.2 docs used 128K, but those figures do not
+  establish the `chat.deepseek.com` client limit. The provider therefore
+  registers 61,440 by default; override it with
+  `DEEPSEEK_WEB_CONTEXT_WINDOW` only if you have verified a different web limit.
 
 ## Development
 

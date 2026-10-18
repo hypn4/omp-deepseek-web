@@ -8,7 +8,10 @@ import {
   writeAuthValue,
 } from "../src/auth/token-store";
 import { DeepSeekClient } from "../src/deepseek/client";
-import { resolveThinkingEnabled } from "../src/deepseek/options";
+import {
+  resolveContextWindow,
+  resolveThinkingEnabled,
+} from "../src/deepseek/options";
 import type { PromptContext, PromptTool } from "./prompt";
 import { buildOmpPrompt } from "./prompt";
 import { runDeepSeekTurn } from "./provider";
@@ -65,7 +68,9 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
         input: ["text", "image"],
         supportsTools: true,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128000,
+        contextWindow: resolveContextWindow(
+          process.env.DEEPSEEK_WEB_CONTEXT_WINDOW,
+        ),
         maxTokens: 8192,
       },
     ],
