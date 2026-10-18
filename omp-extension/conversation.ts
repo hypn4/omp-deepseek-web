@@ -1,26 +1,23 @@
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import {
-  chmodSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { PromptContext, PromptMessage } from "./prompt";
 
-/** Persistent session metadata is kept in one owner-only file. */
+/** SQLite mapping store for persistent native chat sessions. */
 export const DEFAULT_SESSION_STORE_PATH = join(
   homedir(),
   ".omp",
   "agent",
-  "deepseek-web-sessions.json",
+  "deepseek-web-sessions.sqlite",
 );
 
 /** Default age after which an unused mapping is forgotten. */
 export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Hard cap keeps the store bounded even if TTL records are still fresh. */
+export const DEFAULT_SESSION_MAX_ENTRIES = 1_024;
 
 export interface StoredSession {
   chatSessionId: string;
@@ -54,31 +51,31 @@ export interface ConversationPlanner {
     fullPrompt: string,
     incrementalPrompt: (startIndex: number) => string | null,
   ): ConversationPlan;
+  /** Returns mappings evicted by TTL or the entry cap. */
   commit(
     scopeKey: string,
     context: PromptContext,
     chatSessionId: string,
     parentMessageId: number,
-  ): void;
+  ): StoredSession[];
   invalidate(scopeKey: string): void;
   remove(scopeKey: string): StoredSession | undefined;
 }
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (typeof value === "object" && value !== null) {
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) {
-      result[key] = canonicalize((value as Record<string, unknown>)[key]);
-    }
-    return result;
-  }
-  return value;
-}
-
 function hashJson(value: unknown): string {
+  const canonicalize = (input: unknown): unknown => {
+    if (Array.isArray(input)) {
+      return input.map(canonicalize);
+    }
+    if (typeof input === "object" && input !== null) {
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(input).sort()) {
+        result[key] = canonicalize((input as Record<string, unknown>)[key]);
+      }
+      return result;
+    }
+    return input;
+  };
   return createHash("sha256")
     .update(JSON.stringify(canonicalize(value)))
     .digest("hex");
@@ -90,10 +87,6 @@ function toolFingerprint(context: PromptContext): unknown {
   return [...(context.tools ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((tool) => ({ name: tool.name, parameters: tool.parameters ?? null }));
-}
-
-export function hashPromptValue(value: unknown): string {
-  return hashJson(value);
 }
 
 export function hashMessages(
@@ -114,7 +107,9 @@ export class EphemeralPlanner implements ConversationPlanner {
     return { prompt: fullPrompt, persistent: false, reused: false };
   }
 
-  commit(): void {}
+  commit(): StoredSession[] {
+    return [];
+  }
 
   invalidate(): void {}
 
@@ -123,47 +118,132 @@ export class EphemeralPlanner implements ConversationPlanner {
   }
 }
 
-interface SessionFile {
-  version: 1;
-  sessions: Record<string, StoredSession>;
+interface SessionRow {
+  scope_key: string;
+  chat_session_id: string;
+  parent_message_id: number;
+  message_count: number;
+  prefix_hash: string;
+  system_hash: string;
+  tools_hash: string;
+  updated_at: number;
 }
 
-function validRecord(value: unknown): value is StoredSession {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const record = value as Partial<StoredSession>;
-  return (
-    typeof record.chatSessionId === "string" &&
-    record.chatSessionId.length > 0 &&
-    typeof record.parentMessageId === "number" &&
-    Number.isFinite(record.parentMessageId) &&
-    typeof record.messageCount === "number" &&
-    Number.isInteger(record.messageCount) &&
-    record.messageCount >= 0 &&
-    typeof record.prefixHash === "string" &&
-    typeof record.systemHash === "string" &&
-    typeof record.toolsHash === "string" &&
-    typeof record.updatedAt === "number"
-  );
+function toStoredSession(row: SessionRow): StoredSession {
+  return {
+    chatSessionId: row.chat_session_id,
+    parentMessageId: row.parent_message_id,
+    messageCount: row.message_count,
+    prefixHash: row.prefix_hash,
+    systemHash: row.system_hash,
+    toolsHash: row.tools_hash,
+    updatedAt: row.updated_at,
+  };
+}
+
+export interface PersistentPlannerOptions {
+  /** SQLite path; null/undefined uses the default path, ":memory:" is allowed. */
+  path?: string | null;
+  ttlMs?: number;
+  maxEntries?: number;
 }
 
 /**
  * Reuses one native DeepSeek chat session for consecutive turns when the OMP
  * context is an exact prefix extension. Any mutation (compaction, edit, tool
  * schema change) resets to a fresh session with a full prompt.
+ *
+ * State lives in SQLite so commits are row-sized, TTL pruning is incremental,
+ * and multiple omp processes do not rewrite a shared JSON blob.
  */
 export class PersistentPlanner implements ConversationPlanner {
-  readonly #path: string | null;
+  readonly #db: Database;
+  readonly #isFile: boolean;
   readonly #ttlMs: number;
-  #sessions = new Map<string, StoredSession>();
-  #expired: StoredSession[] = [];
+  readonly #maxEntries: number;
+  #pendingEvictions: StoredSession[] = [];
+  readonly #select: ReturnType<Database["query"]>;
+  readonly #upsert: ReturnType<Database["query"]>;
+  readonly #remove: ReturnType<Database["query"]>;
+  readonly #deleteExpired: ReturnType<Database["query"]>;
+  readonly #deleteScope: ReturnType<Database["query"]>;
+  readonly #oldest: ReturnType<Database["query"]>;
+  readonly #count: ReturnType<Database["query"]>;
 
-  constructor(options: { path?: string | null; ttlMs?: number } = {}) {
-    this.#path = options.path === undefined ? DEFAULT_SESSION_STORE_PATH : options.path;
+  constructor(options: PersistentPlannerOptions = {}) {
+    const path =
+      options.path === undefined
+        ? DEFAULT_SESSION_STORE_PATH
+        : (options.path ?? ":memory:");
     this.#ttlMs = Math.max(0, Math.trunc(options.ttlMs ?? DEFAULT_SESSION_TTL_MS));
-    this.#load();
-    this.#expire();
+    this.#maxEntries = Math.max(
+      0,
+      Math.trunc(options.maxEntries ?? DEFAULT_SESSION_MAX_ENTRIES),
+    );
+
+    if (path !== ":memory:") {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    }
+    this.#isFile = path !== ":memory:";
+    this.#db = new Database(path, { create: true });
+    this.#db.exec("PRAGMA busy_timeout = 5000");
+    this.#db.exec("PRAGMA synchronous = NORMAL");
+    if (this.#isFile) {
+      this.#db.exec("PRAGMA journal_mode = WAL");
+      this.#db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+      chmodSync(path, 0o600);
+    }
+    this.#db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        scope_key TEXT PRIMARY KEY,
+        chat_session_id TEXT NOT NULL,
+        parent_message_id INTEGER NOT NULL,
+        message_count INTEGER NOT NULL,
+        prefix_hash TEXT NOT NULL,
+        system_hash TEXT NOT NULL,
+        tools_hash TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS sessions_updated_at
+        ON sessions(updated_at);
+      PRAGMA user_version = 1;
+    `);
+    this.#select = this.#db.query(
+      "SELECT * FROM sessions WHERE scope_key = ?",
+    );
+    this.#upsert = this.#db.query(`
+      INSERT INTO sessions (
+        scope_key, chat_session_id, parent_message_id, message_count,
+        prefix_hash, system_hash, tools_hash, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scope_key) DO UPDATE SET
+        chat_session_id = excluded.chat_session_id,
+        parent_message_id = excluded.parent_message_id,
+        message_count = excluded.message_count,
+        prefix_hash = excluded.prefix_hash,
+        system_hash = excluded.system_hash,
+        tools_hash = excluded.tools_hash,
+        updated_at = excluded.updated_at
+    `);
+    this.#remove = this.#db.query(
+      "DELETE FROM sessions WHERE scope_key = ?",
+    );
+    this.#deleteExpired = this.#db.query(
+      "DELETE FROM sessions WHERE updated_at < ?",
+    );
+    this.#deleteScope = this.#db.query(
+      "DELETE FROM sessions WHERE scope_key = ?",
+    );
+    this.#oldest = this.#db.query(
+      `SELECT * FROM sessions
+       WHERE scope_key != ?
+       ORDER BY updated_at ASC, rowid ASC
+       LIMIT ?`,
+    );
+    this.#count = this.#db.query("SELECT COUNT(*) AS count FROM sessions");
+
+    // Startup cleanup returns records so the caller can delete native chats.
+    this.#pendingEvictions.push(...this.#prune());
   }
 
   plan(
@@ -176,10 +256,11 @@ export class PersistentPlanner implements ConversationPlanner {
       return { prompt: fullPrompt, persistent: false, reused: false };
     }
 
-    const record = this.#sessions.get(scopeKey);
-    if (record === undefined) {
+    const row = this.#select.get(scopeKey) as SessionRow | null;
+    if (row === null) {
       return { prompt: fullPrompt, persistent: true, reused: false };
     }
+    const record = toStoredSession(row);
 
     const systemHash = hashJson(context.systemPrompt ?? []);
     const toolsHash = hashJson(toolFingerprint(context));
@@ -252,117 +333,86 @@ export class PersistentPlanner implements ConversationPlanner {
     context: PromptContext,
     chatSessionId: string,
     parentMessageId: number,
-  ): void {
+  ): StoredSession[] {
     if (scopeKey === "") {
-      return;
+      return [];
     }
-    this.#sessions.set(scopeKey, {
+    this.#upsert.run(
+      scopeKey,
       chatSessionId,
       parentMessageId,
-      messageCount: context.messages.length,
-      prefixHash: hashMessages(context.messages, context.messages.length),
-      systemHash: hashJson(context.systemPrompt ?? []),
-      toolsHash: hashJson(toolFingerprint(context)),
-      updatedAt: Date.now(),
-    });
-    this.#save();
+      context.messages.length,
+      hashMessages(context.messages, context.messages.length),
+      hashJson(context.systemPrompt ?? []),
+      hashJson(toolFingerprint(context)),
+      Date.now(),
+    );
+    return this.#prune(scopeKey);
   }
 
   invalidate(scopeKey: string): void {
-    if (this.#sessions.delete(scopeKey)) {
-      this.#save();
+    if (scopeKey !== "") {
+      this.#deleteScope.run(scopeKey);
     }
   }
 
   remove(scopeKey: string): StoredSession | undefined {
-    const record = this.#sessions.get(scopeKey);
-    if (record === undefined) {
+    if (scopeKey === "") {
       return undefined;
     }
-    this.#sessions.delete(scopeKey);
-    this.#save();
-    return record;
+    const row = this.#select.get(scopeKey) as SessionRow | null;
+    if (row === null) {
+      return undefined;
+    }
+    this.#remove.run(scopeKey);
+    return toStoredSession(row);
   }
 
-  #load(): void {
-    if (this.#path === null) {
-      return;
-    }
-    let raw: string;
-    try {
-      raw = readFileSync(this.#path, "utf8");
-    } catch (error) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error
-          ? error.code
-          : undefined;
-      if (code === "ENOENT") {
-        return;
+  /** Records dropped by startup TTL/cap cleanup; the caller deletes their chats. */
+  drainExpired(): StoredSession[] {
+    const evicted = this.#pendingEvictions;
+    this.#pendingEvictions = [];
+    return evicted;
+  }
+
+  close(): void {
+    this.#db.close();
+  }
+
+  #prune(protectScope = ""): StoredSession[] {
+    const removed: StoredSession[] = [];
+    if (this.#ttlMs > 0) {
+      const cutoff = Date.now() - this.#ttlMs;
+      const expired = this.#db
+        .query("SELECT * FROM sessions WHERE updated_at < ?")
+        .all(cutoff) as SessionRow[];
+      if (expired.length > 0) {
+        this.#deleteExpired.run(cutoff);
+        removed.push(...expired.map(toStoredSession));
       }
-      throw error;
     }
-    try {
-      const parsed = JSON.parse(raw) as Partial<SessionFile>;
-      if (parsed.version !== 1 || typeof parsed.sessions !== "object" || parsed.sessions === null) {
-        return;
-      }
-      for (const [key, value] of Object.entries(parsed.sessions)) {
-        if (validRecord(value)) {
-          this.#sessions.set(key, value);
+
+    if (this.#maxEntries > 0) {
+      const countRow = this.#count.get() as { count: number };
+      const excess = countRow.count - this.#maxEntries;
+      if (excess > 0) {
+        const oldest = this.#oldest.all(protectScope, excess) as SessionRow[];
+        if (oldest.length > 0) {
+          const deleteOne = this.#db.query(
+            "DELETE FROM sessions WHERE scope_key = ?",
+          );
+          for (const row of oldest) {
+            deleteOne.run(row.scope_key);
+            removed.push(toStoredSession(row));
+          }
         }
       }
-    } catch {
-      // A corrupt store must not prevent the provider from starting.
     }
-  }
 
-  /** Records dropped by TTL loading; the caller can delete their chats. */
-  drainExpired(): StoredSession[] {
-    const expired = this.#expired;
-    this.#expired = [];
-    return expired;
-  }
-
-  #expire(): void {
-    if (this.#ttlMs <= 0) {
-      return;
+    if (removed.length > 0 && this.#isFile) {
+      this.#db.exec("PRAGMA incremental_vacuum");
+      this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     }
-    const cutoff = Date.now() - this.#ttlMs;
-    let changed = false;
-    for (const [key, record] of this.#sessions) {
-      if (record.updatedAt < cutoff) {
-        this.#sessions.delete(key);
-        this.#expired.push(record);
-        changed = true;
-      }
-    }
-    if (changed) {
-      this.#save();
-    }
-  }
-
-  #save(): void {
-    if (this.#path === null) {
-      return;
-    }
-    mkdirSync(dirname(this.#path), { recursive: true, mode: 0o700 });
-    const sessions: Record<string, StoredSession> = {};
-    for (const [key, record] of this.#sessions) {
-      sessions[key] = record;
-    }
-    const payload: SessionFile = { version: 1, sessions };
-    const temporary = `${this.#path}.${process.pid}.${globalThis.crypto.randomUUID()}.tmp`;
-    try {
-      writeFileSync(temporary, `${JSON.stringify(payload)}\n`, { mode: 0o600 });
-      chmodSync(temporary, 0o600);
-      renameSync(temporary, this.#path);
-    } catch (error) {
-      try {
-        unlinkSync(temporary);
-      } catch {
-        // Best-effort cleanup; the store remains usable in memory.
-      }
-      throw error;
-    }
+    return removed;
   }
 }

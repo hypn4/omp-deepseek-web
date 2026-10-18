@@ -328,6 +328,31 @@ describe("DeepSeek omp provider", () => {
     expect(deleted).toEqual([]);
   });
 
+  test("deletes the native chat evicted by the persistent entry cap", async () => {
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null, ttlMs: 0, maxEntries: 1 });
+    const firstDeps = providerDeps({
+      responses: [{ text: "one", messageId: 2 }],
+      sessionIds: ["session-1", "session-2"],
+      planner,
+      scopeKey: "scope-1",
+      onDelete: (id) => deleted.push(id),
+    });
+    const secondDeps = providerDeps({
+      responses: [{ text: "two", messageId: 2 }],
+      sessionIds: ["session-2"],
+      planner,
+      scopeKey: "scope-2",
+      onDelete: (id) => deleted.push(id),
+    });
+
+    await run(firstDeps, { messages: [{ role: "user", content: "hello" }] });
+    await run(secondDeps, { messages: [{ role: "user", content: "hello" }] });
+
+    expect(deleted).toEqual(["session-1"]);
+    planner.close();
+  });
+
   test("deletes and invalidates a persistent session on failure", async () => {
     const deleted: string[] = [];
     const planner = new PersistentPlanner({ path: null });

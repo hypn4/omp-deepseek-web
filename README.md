@@ -206,9 +206,12 @@ tool-less utility calls always use an ephemeral session, so they cannot replace
 the main chat mapping.
 
 Mappings contain only chat/message ids and hashes; no prompt text or tool output
-is stored. They live in `~/.omp/agent/deepseek-web-sessions.json` with mode
-`0600`. Unused mappings expire after `DEEPSEEK_WEB_SESSION_TTL_MS` (7 days), and
-their native chats are deleted best-effort.
+is stored. They live in a SQLite database at
+`~/.omp/agent/deepseek-web-sessions.sqlite` with owner-only directory/file
+permissions. The store is bounded by a 7-day TTL and a hard entry cap
+(`DEEPSEEK_WEB_SESSION_MAX_ENTRIES`, default 1024). TTL and cap evictions delete
+their native chats best-effort; SQLite WAL and incremental vacuum avoid
+rewriting the whole store on every turn.
 
 To restore the old behavior:
 
@@ -233,8 +236,9 @@ In ephemeral mode every provider call creates and deletes its own DeepSeek chat.
 | `DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS` | `10000` | Initial backoff; doubles per retry (10s, 20s, ...). |
 | `DEEPSEEK_WEB_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum spacing between requests from this process, shared across sessions and tool loops. |
 | `DEEPSEEK_WEB_SESSION_MODE` | `persistent` | `persistent` reuses one native chat per omp conversation; `ephemeral` creates and deletes a chat per provider call. |
-| `DEEPSEEK_WEB_SESSION_STORE` | `~/.omp/agent/deepseek-web-sessions.json` | Owner-only mapping file for persistent sessions. |
+| `DEEPSEEK_WEB_SESSION_STORE` | `~/.omp/agent/deepseek-web-sessions.sqlite` | Owner-only SQLite mapping database for persistent sessions. |
 | `DEEPSEEK_WEB_SESSION_TTL_MS` | `604800000` | Drop unused mappings after 7 days; their native chats are deleted best-effort. |
+| `DEEPSEEK_WEB_SESSION_MAX_ENTRIES` | `1024` | Hard cap; the oldest mappings are evicted first and their native chats are deleted. |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
 The token and device id are stored at:

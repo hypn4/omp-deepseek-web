@@ -18,6 +18,7 @@ import type { PromptContext, PromptTool } from "./prompt";
 import { buildOmpIncrementalPrompt, buildOmpPrompt } from "./prompt";
 import type { ConversationPlanner } from "./conversation";
 import {
+  DEFAULT_SESSION_MAX_ENTRIES,
   DEFAULT_SESSION_STORE_PATH,
   DEFAULT_SESSION_TTL_MS,
   EphemeralPlanner,
@@ -42,6 +43,11 @@ function createPlanner(): ConversationPlanner {
         resolveNonNegativeInt(
           process.env.DEEPSEEK_WEB_SESSION_TTL_MS,
           DEFAULT_SESSION_TTL_MS,
+        ),
+      maxEntries:
+        resolveNonNegativeInt(
+          process.env.DEEPSEEK_WEB_SESSION_MAX_ENTRIES,
+          DEFAULT_SESSION_MAX_ENTRIES,
         ),
     });
   } catch {

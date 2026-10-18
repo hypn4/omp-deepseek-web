@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -164,24 +165,39 @@ describe("persistent conversation planner", () => {
 
   test("persists mappings across planner instances", () => {
     const directory = mkdtempSync(join(tmpdir(), "deepseek-sessions-"));
-    const path = join(directory, "sessions.json");
+    const path = join(directory, "sessions.sqlite");
+    const first = new PersistentPlanner({ path, ttlMs: 60_000 });
     try {
-      const first = new PersistentPlanner({ path, ttlMs: 60_000 });
       first.commit("s", context([user("one")]), "chat-1", 2);
+      first.close();
 
       const second = new PersistentPlanner({ path, ttlMs: 60_000 });
-      const plan = second.plan(
-        "s",
-        context([user("one"), assistant("answer"), user("two")]),
-        FULL,
-        incremental,
-      );
-      expect(plan).toMatchObject({
-        chatSessionId: "chat-1",
-        parentMessageId: 2,
-        reused: true,
-      });
-      expect(JSON.parse(readFileSync(path, "utf8")).sessions.s.chatSessionId).toBe("chat-1");
+      try {
+        const plan = second.plan(
+          "s",
+          context([user("one"), assistant("answer"), user("two")]),
+          FULL,
+          incremental,
+        );
+        expect(plan).toMatchObject({
+          chatSessionId: "chat-1",
+          parentMessageId: 2,
+          reused: true,
+        });
+      } finally {
+        second.close();
+      }
+
+      const db = new Database(path);
+      try {
+        expect(
+          (db.query("SELECT chat_session_id FROM sessions WHERE scope_key = 's'").get() as {
+            chat_session_id: string;
+          }).chat_session_id,
+        ).toBe("chat-1");
+      } finally {
+        db.close();
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -189,35 +205,49 @@ describe("persistent conversation planner", () => {
 
   test("drops stale mappings and reports their chats for cleanup", () => {
     const directory = mkdtempSync(join(tmpdir(), "deepseek-sessions-"));
-    const path = join(directory, "sessions.json");
+    const path = join(directory, "sessions.sqlite");
+    const planner = new PersistentPlanner({ path, ttlMs: 60_000 });
     try {
-      writeFileSync(
-        path,
-        JSON.stringify({
-          version: 1,
-          sessions: {
-            stale: {
-              chatSessionId: "old-chat",
-              parentMessageId: 2,
-              messageCount: 1,
-              prefixHash: "x",
-              systemHash: "y",
-              toolsHash: "z",
-              updatedAt: 1,
-            },
-          },
-        }),
-      );
-      const planner = new PersistentPlanner({ path, ttlMs: 10 });
-      expect(planner.drainExpired().map((record) => record.chatSessionId)).toEqual([
-        "old-chat",
-      ]);
-      expect(planner.plan("stale", context([user("one")]), FULL, incremental)).toMatchObject({
+      planner.commit("stale", context([user("one")]), "old-chat", 2);
+      planner.close();
+
+      const db = new Database(path);
+      try {
+        db.query("UPDATE sessions SET updated_at = 1").run();
+      } finally {
+        db.close();
+      }
+
+      const expired = new PersistentPlanner({ path, ttlMs: 10 });
+      try {
+        expect(expired.drainExpired().map((record) => record.chatSessionId)).toEqual([
+          "old-chat",
+        ]);
+        expect(expired.plan("stale", context([user("one")]), FULL, incremental)).toMatchObject({
+          prompt: FULL,
+          reused: false,
+        });
+      } finally {
+        expired.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("evicts the oldest mapping when the entry cap is exceeded", () => {
+    const planner = new PersistentPlanner({ path: null, ttlMs: 0, maxEntries: 2 });
+    try {
+      planner.commit("one", context([user("one")]), "chat-1", 2);
+      planner.commit("two", context([user("two")]), "chat-2", 2);
+      const evicted = planner.commit("three", context([user("three")]), "chat-3", 2);
+      expect(evicted.map((record) => record.chatSessionId)).toEqual(["chat-1"]);
+      expect(planner.plan("one", context([user("one")]), FULL, incremental)).toMatchObject({
         prompt: FULL,
         reused: false,
       });
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      planner.close();
     }
   });
 
@@ -227,5 +257,6 @@ describe("persistent conversation planner", () => {
     expect(planner.remove("s")?.chatSessionId).toBe("chat-1");
     expect(planner.remove("s")).toBeUndefined();
     expect(hashMessages([], 0)).toBe(hashMessages([], 0));
+    planner.close();
   });
 });

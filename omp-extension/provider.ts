@@ -303,7 +303,21 @@ export async function runDeepSeekTurn(
       !signal.aborted
     ) {
       try {
-        planner.commit(scopeKey, context, sessionId, result.messageId);
+        const evicted = planner.commit(
+          scopeKey,
+          context,
+          sessionId,
+          result.messageId,
+        );
+        for (const record of evicted) {
+          if (record.chatSessionId !== sessionId) {
+            try {
+              await client.deleteSession(record.chatSessionId);
+            } catch {
+              // Eviction cleanup is best-effort.
+            }
+          }
+        }
         keepSession = true;
       } catch {
         // A failed metadata write must not leave an unreachable chat behind.
