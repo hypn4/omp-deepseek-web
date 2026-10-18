@@ -35,6 +35,33 @@ describe("DeepSeekSseParser", () => {
     });
   });
 
+  test("does not let a title event overwrite a rate-limit hint", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      [
+        "event: ready",
+        'data: {"request_message_id":1,"response_message_id":2}',
+        "",
+        "event: hint",
+        'data: {"type":"error","content":"Messages too frequent. Try again later.","finish_reason":"rate_limit_reached"}',
+        "",
+        "event: title",
+        'data: {"content":"앱 인증 방식 분석"}',
+        "",
+        "event: close",
+        'data: {"click_behavior":"retry","auto_resume":false}',
+        "",
+      ].join("\n"),
+    );
+
+    expect(parser.result()).toMatchObject({
+      errorType: "error",
+      errorMessage: "Messages too frequent. Try again later.",
+      finishReason: "rate_limit_reached",
+      finished: true,
+    });
+  });
+
   test("keeps THINK and RESPONSE fragments separate", () => {
     const parser = new DeepSeekSseParser();
     parser.feed(

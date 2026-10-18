@@ -94,6 +94,9 @@ function writeSegment(container: unknown, segment: string, value: unknown): void
 export class DeepSeekSseParser {
   #buffer = "";
   #finished = false;
+  #eventName = "";
+  #hint: JsonRecord | null = null;
+  #ready: JsonRecord | null = null;
   #state: JsonRecord = Object.create(null) as JsonRecord;
 
   feed(text: string): void {
@@ -183,16 +186,25 @@ export class DeepSeekSseParser {
     ) {
       finishReason = rawTopFinish;
     }
-    const rawHintType = this.#get("type");
-    const rawHintContent = this.#get("content");
-    const errorType =
-      rawHintType === "error" ? "error" : undefined;
+    const hint = this.#hint;
+    const hintFinish = hint?.finish_reason;
+    if (
+      finishReason === undefined &&
+      typeof hintFinish === "string" &&
+      hintFinish !== ""
+    ) {
+      finishReason = hintFinish;
+    }
+    const errorType = hint?.type === "error" ? "error" : undefined;
+    const rawHintContent = hint?.content;
     const errorMessage =
       errorType === "error" && typeof rawHintContent === "string"
         ? rawHintContent
         : undefined;
 
-    const rawMessageId = this.#get("response_message_id");
+    const rawMessageId =
+      this.#ready?.response_message_id ??
+      this.#get("response_message_id");
     const messageId =
       typeof rawMessageId === "number" && Number.isFinite(rawMessageId)
         ? rawMessageId
@@ -213,12 +225,20 @@ export class DeepSeekSseParser {
   }
 
   #handleLine(line: string): void {
-    if (line === "" || line.startsWith(":")) {
+    if (line === "") {
+      // An SSE dispatch ends at a blank line; the next data line is global
+      // again. Without this reset a `title` event could leak into a later
+      // patch or inherit a previous event's named scope.
+      this.#eventName = "";
+      return;
+    }
+    if (line.startsWith(":")) {
       return;
     }
 
     if (line.startsWith("event:")) {
-      if (line.slice("event:".length).trim() === "close") {
+      this.#eventName = line.slice("event:".length).trim();
+      if (this.#eventName === "close") {
         this.#finished = true;
       }
       return;
@@ -240,6 +260,26 @@ export class DeepSeekSseParser {
       return;
     }
     if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
+      return;
+    }
+
+    if (this.#eventName !== "") {
+      if (this.#eventName === "hint") {
+        this.#hint = patch as JsonRecord;
+      } else if (this.#eventName === "ready") {
+        this.#ready = patch as JsonRecord;
+        // Some captures seed the response in the ready event instead of a
+        // standalone patch. Preserve that shape without treating metadata as
+        // response state.
+        if ("v" in patch || "p" in patch || "o" in patch) {
+          this.#applyPatch(patch as JsonRecord, "");
+        }
+      }
+      // `title`, `update_session`, `auto_tts_capability`, and unknown named
+      // events are metadata, not response patches. Never merge their fields
+      // into the response state. DeepSeek sends one data line per named event;
+      // clearing the scope here also tolerates streams without blank lines.
+      this.#eventName = "";
       return;
     }
 
