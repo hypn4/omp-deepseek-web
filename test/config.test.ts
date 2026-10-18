@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("device id configuration", () => {
-  test("reads the trimmed device id saved by the login helper", () => {
+  test("reads the trimmed device id saved by the browser extension", () => {
     const path = deviceIdPath();
     writeFileSync(path, "  4e9c1d2a-7f3b-4c8e-9a1d-2b3c4d5e6f70\n\n");
 

@@ -5,7 +5,6 @@
   "description": "Sends the chat.deepseek.com session token to the local omp proxy.",
   "permissions": [],
   "host_permissions": [
-    "https://chat.deepseek.com/*",
     "http://127.0.0.1:8787/*"
   ],
   "background": {

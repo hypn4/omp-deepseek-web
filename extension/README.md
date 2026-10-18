@@ -31,9 +31,14 @@ is updated automatically.
 
 ## Permissions
 
-- `https://chat.deepseek.com/*` — read `localStorage.userToken` and
+- The content script runs on `https://chat.deepseek.com/*` (declared in
+  `content_scripts.matches`) and reads `localStorage.userToken` and
   `deepseek-device-id:chat`.
 - `http://127.0.0.1:8787/*` — POST the token to the local proxy.
+
+If you change `DEEPSEEK_WEB_PORT`, update `PROXY_URL` in `background.js` and the
+host permission in `manifest.json` to match; they are intentionally fixed to the
+default proxy port.
 
 The token is only sent to loopback. It is never logged by the extension or the
 proxy. The proxy stores it with owner-only permissions.

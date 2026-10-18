@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "../src/config";
 import { startServer } from "../src/server";
 import type { CompletionClient, ServerConfig } from "../src/config";
@@ -121,22 +124,30 @@ interface Running {
 }
 
 let servers: Running[] = [];
+const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   for (const server of servers) {
     server.stop();
   }
   servers = [];
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 function start(
   fake: Fake,
   config: Partial<ServerConfig> = {},
 ): { baseUrl: string; state: FakeState } {
+  const directory = mkdtempSync(join(tmpdir(), "deepseek-web-server-"));
+  temporaryDirectories.push(directory);
   const server = startServer({
     port: 0,
     hostname: "127.0.0.1",
     deviceId: "device-test",
+    tokenPath: join(directory, "token"),
+    deviceIdPath: join(directory, "device"),
     maxPromptChars: 400000,
     createClient: (token) => {
       fake.state.tokens.push(token);

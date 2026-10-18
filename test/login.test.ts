@@ -123,6 +123,21 @@ describe("POST /login/token", () => {
     }
   });
 
+  test("rejects a non-JSON content type", async () => {
+    const server = start();
+    try {
+      const response = await fetch(`${server.baseUrl}/login/token`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ token: "stored-token" }),
+      });
+      expect(response.status).toBe(415);
+      expect((await response.json()).error.code).toBe("unsupported_media_type");
+    } finally {
+      server.stop();
+    }
+  });
+
   test("uses the stored token instead of the omp bearer value", async () => {
     const server = start();
     try {

@@ -143,6 +143,12 @@ tool, see limitations below.
 | `DEEPSEEK_WEB_SEARCH` | `0` | `1` enables web search |
 | `DEEPSEEK_WEB_MAX_PROMPT_CHARS` | `400000` | Prompt length cap |
 | `DEEPSEEK_WEB_LOG_LEVEL` | `info` | `debug` adds stream-error detail; prompts and tokens are never logged |
+| `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced: command whose stdout is a fresh token after a 401 |
+
+If you change `DEEPSEEK_WEB_PORT`, update `PROXY_URL` in
+`extension/background.js` and the loopback host permission in
+`extension/manifest.json` to match. They are intentionally fixed to the default
+port.
 
 The token and device id are stored in `~/.omp/agent/deepseek-web-token` and
 `~/.omp/agent/.deepseek-web-device-id` with mode `0600`. The proxy reads them at

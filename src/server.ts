@@ -507,17 +507,10 @@ async function handleChatCompletion(
   }
 }
 
-const LOGIN_CORS_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "POST, OPTIONS",
-  "access-control-allow-headers": "content-type",
-  "cache-control": "no-store",
-};
-
 function loginError(status: number, message: string, code: string): Response {
   return Response.json(
     { error: { message, type: "invalid_request_error", code } },
-    { status, headers: LOGIN_CORS_HEADERS },
+    { status, headers: { "cache-control": "no-store" } },
   );
 }
 
@@ -529,8 +522,13 @@ async function handleLoginToken(
   request: Request,
   config: ResolvedConfig,
 ): Promise<Response> {
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: LOGIN_CORS_HEADERS });
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!/^application\/json(?:\s*;|$)/i.test(contentType.trim())) {
+    return loginError(
+      415,
+      "Use Content-Type: application/json.",
+      "unsupported_media_type",
+    );
   }
 
   let raw: unknown;
@@ -571,7 +569,10 @@ async function handleLoginToken(
     return loginError(500, "Failed to store the token.", "storage_error");
   }
 
-  return Response.json({ ok: true }, { headers: LOGIN_CORS_HEADERS });
+  return Response.json(
+    { ok: true },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
 
 async function handleRequest(
@@ -584,7 +585,7 @@ async function handleRequest(
     return modelsResponse();
   }
   if (pathname === "/login/token") {
-    if (request.method === "POST" || request.method === "OPTIONS") {
+    if (request.method === "POST") {
       return handleLoginToken(request, config);
     }
     return loginError(405, "Use POST /login/token.", "method_not_allowed");
@@ -592,7 +593,7 @@ async function handleRequest(
   if (request.method === "GET" && pathname === "/login/status") {
     return Response.json(
       { hasToken: config.auth.token !== null },
-      { headers: LOGIN_CORS_HEADERS },
+      { headers: { "cache-control": "no-store" } },
     );
   }
   if (request.method === "POST" && pathname === "/v1/chat/completions") {

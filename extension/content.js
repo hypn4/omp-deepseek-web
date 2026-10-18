@@ -36,10 +36,14 @@
     try {
       chrome.runtime.sendMessage(
         { type: "deepseek-token", token, deviceId },
-        () => void chrome.runtime.lastError,
+        (response) => {
+          if (chrome.runtime.lastError || response?.ok !== true) {
+            lastSentAt = 0;
+          }
+        },
       );
     } catch {
-      // The proxy or extension context may be unavailable; retry on the next tick.
+      lastSentAt = 0;
     }
   }
 
