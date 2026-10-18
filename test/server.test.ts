@@ -209,6 +209,50 @@ describe("POST /v1/chat/completions", () => {
     expect(state.requests[0]?.searchEnabled).toBe(false);
   });
 
+  test("accepts text content parts and replays them as one prompt block", async () => {
+    const fake = createFake({ text: "OK" });
+    const { baseUrl, state } = start(fake);
+
+    const response = await postCompletion(baseUrl, {
+      model: "deepseek-web",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "First block." },
+            { type: "text", text: "Second block." },
+          ],
+        },
+      ],
+      stream: false,
+    });
+
+    expect(response.status).toBe(200);
+    expect(state.requests[0]?.prompt).toContain(
+      "User:\nFirst block.\nSecond block.",
+    );
+  });
+
+  test("rejects content parts that are not text", async () => {
+    const fake = createFake({ text: "never used" });
+    const { baseUrl, state } = start(fake);
+
+    const response = await postCompletion(baseUrl, {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "image_url", image_url: { url: "https://x" } }],
+        },
+      ],
+      stream: false,
+    });
+
+    expect(response.status).toBe(400);
+    const json: ErrorJson = await response.json();
+    expect(json.error.code).toBe("invalid_request");
+    expect(state.created).toBe(0);
+  });
+
   test("forces thinking off when tools are present but honors search", async () => {
     const fake = createFake({ text: "OK" });
     const { baseUrl, state } = start(fake);

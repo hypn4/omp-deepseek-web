@@ -124,6 +124,39 @@ function parseToolCall(value: unknown): OpenAIToolCall | null {
   };
 }
 
+/**
+ * Normalizes OpenAI message content. Clients (omp included) send either a
+ * plain string or an array of content parts; this proxy only supports text, so
+ * text parts are joined into one string. Any non-text part rejects the request
+ * instead of being silently dropped.
+ */
+function parseContent(
+  value: unknown,
+): { ok: true; content: string | null } | { ok: false } {
+  if (value === undefined || value === null) {
+    return { ok: true, content: null };
+  }
+  if (typeof value === "string") {
+    return { ok: true, content: value };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false };
+  }
+  const parts: string[] = [];
+  for (const part of value) {
+    const record = asRecord(part);
+    if (
+      record === null ||
+      record.type !== "text" ||
+      typeof record.text !== "string"
+    ) {
+      return { ok: false };
+    }
+    parts.push(record.text);
+  }
+  return { ok: true, content: parts.join("\n") };
+}
+
 function parseMessage(value: unknown): OpenAIMessage | null {
   const record = asRecord(value);
   if (record === null) {
@@ -138,14 +171,14 @@ function parseMessage(value: unknown): OpenAIMessage | null {
   ) {
     return null;
   }
-  const content = record.content;
-  if (content !== undefined && content !== null && typeof content !== "string") {
+  const parsedContent = parseContent(record.content);
+  if (!parsedContent.ok) {
     return null;
   }
 
   const message: OpenAIMessage = {
     role,
-    content: typeof content === "string" ? content : null,
+    content: parsedContent.content,
   };
   if (typeof record.name === "string") {
     message.name = record.name;
