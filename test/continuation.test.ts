@@ -37,6 +37,15 @@ describe("truncation detection", () => {
     ).toBe(true);
   });
 
+  test("detects a short final prose line cut off after a word", () => {
+    expect(
+      isLikelyIncomplete({
+        text: "결론은 다음과 같습니다.\n혹시 **특정 제품(예: 리눅스 배포판, AI 도구)이나 사건",
+        finished: true,
+      }),
+    ).toBe(true);
+  });
+
   test("accepts a short list item without punctuation", () => {
     expect(isLikelyIncomplete({ text: "1\n2\n1000", finished: true })).toBe(
       false,
@@ -47,6 +56,19 @@ describe("truncation detection", () => {
     expect(
       isLikelyIncomplete({ text: "| Day | Result |\n| --- | --- |", finished: true }),
     ).toBe(false);
+  });
+
+  test("treats an ellipsis after a word as an incomplete sentence", () => {
+    expect(
+      isLikelyIncomplete({ text: "결론은 본질의…", finished: true }),
+    ).toBe(true);
+    expect(
+      isLikelyIncomplete({ text: "The answer is incomplete...", finished: true }),
+    ).toBe(true);
+  });
+
+  test("accepts a standalone ellipsis", () => {
+    expect(isLikelyIncomplete({ text: "…", finished: true })).toBe(false);
   });
 
   test("detects a long line cut off without punctuation", () => {

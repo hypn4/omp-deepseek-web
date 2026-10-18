@@ -209,6 +209,7 @@ export async function runDeepSeekTurn(
     let messageId = result.messageId;
     let continuations = 0;
     let lengthLimited = false;
+    let forceContinuation = false;
 
     while (true) {
       const toolCalls =
@@ -226,7 +227,10 @@ export async function runDeepSeekTurn(
 
       continuations += 1;
       deps.onStatus?.("DeepSeek Web: continuing…");
-      const continuationPrompt = buildContinuationPrompt(text);
+      const continuationPrompt = buildContinuationPrompt(
+        text,
+        forceContinuation,
+      );
       let continuation;
       try {
         const continuationStream = await client.complete(
@@ -261,11 +265,17 @@ export async function runDeepSeekTurn(
       text = merged;
       thinking += continuation.thinking;
       finished = continuation.finished;
-      messageId = continuation.messageId;
 
       if (isContinuationComplete(addition)) {
-        break;
+        if (continuations >= MAX_CONTINUATIONS) {
+          lengthLimited = true;
+          break;
+        }
+        forceContinuation = true;
+        continue;
       }
+      messageId = continuation.messageId;
+      forceContinuation = false;
       if (merged === previousText) {
         if (isLikelyIncomplete({ text, finished })) {
           lengthLimited = true;

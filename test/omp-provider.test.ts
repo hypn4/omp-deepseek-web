@@ -189,6 +189,24 @@ describe("DeepSeek omp provider", () => {
     expect(sink.ended?.stopReason).toBe("stop");
   });
 
+  test("continues an answer that ends with an ellipsis", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          { text: "The answer is incomplete…", messageId: 2 },
+          { text: " and finishes here.", messageId: 4 },
+        ],
+        onComplete: (value) => requests.push(value),
+      }),
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(sink.ended?.content).toEqual([
+      { type: "text", text: "The answer is incomplete… and finishes here." },
+    ]);
+  });
+
   test("streams a long continuation exactly once", async () => {
     const first = "x".repeat(120) + " but";
     const second = " finished.";
@@ -208,23 +226,46 @@ describe("DeepSeek omp provider", () => {
     expect(streamed).toBe(first + second);
   });
 
-  test("accepts a completion marker without changing the answer", async () => {
+  test("retries with a forced prompt when the model claims a cut-off answer is complete", async () => {
     const requests: DeepSeekCompletionRequest[] = [];
     const sink = await run(
       providerDeps({
         responses: [
           { text: "The answer is incomplete but", messageId: 2 },
           { text: "[COMPLETE]", messageId: 4 },
+          { text: " it finishes here.", messageId: 6 },
         ],
         onComplete: (value) => requests.push(value),
       }),
     );
 
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
+    expect(requests[2]?.parentMessageId).toBe(2);
+    expect(requests[2]?.prompt).toContain("Do not output [COMPLETE]");
+    expect(sink.ended?.content).toEqual([
+      { type: "text", text: "The answer is incomplete but it finishes here." },
+    ]);
+    expect(sink.ended?.stopReason).toBe("stop");
+  });
+
+  test("marks length when even the forced continuation claims complete", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const sink = await run(
+      providerDeps({
+        responses: [
+          { text: "The answer is incomplete but", messageId: 2 },
+          { text: "[COMPLETE]", messageId: 4 },
+          { text: "[COMPLETE]", messageId: 6 },
+        ],
+        onComplete: (value) => requests.push(value),
+      }),
+    );
+
+    expect(requests).toHaveLength(3);
     expect(sink.ended?.content).toEqual([
       { type: "text", text: "The answer is incomplete but" },
     ]);
-    expect(sink.ended?.stopReason).toBe("stop");
+    expect(sink.ended?.stopReason).toBe("length");
   });
 
   test("caps continuation attempts and marks the answer as length-limited", async () => {

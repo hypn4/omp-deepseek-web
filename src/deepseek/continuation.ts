@@ -18,7 +18,11 @@ const DANGLING_ENGLISH = new RegExp(
 const DANGLING_KOREAN =
   /(?:지만|는데|면서|니까|려고|도록|라고|다고|거나|든지|므로|반면|따라서|그러나|그런데|또한|및)\s*$/u;
 const OPEN_DELIMITER = /[([{“‘"']\s*$/u;
+const ELLIPSIS_AFTER_WORD = /[\p{L}\p{N}]\s*(?:…|\.{3,})\s*$/u;
 const WORD_CHAR = /[\p{L}\p{N}]$/u;
+const LIST_ITEM = /^(?:[-*+]|\d+[.)])\s+/u;
+const NUMBER_ONLY = /^(?:[-*+]\s*)?\d+(?:[.)])?\s*$/u;
+const MIN_PROSE_LINE = 30;
 
 function withoutCitations(text: string): string {
   return text.replace(/\[\s*reference:\d+\s*\]/giu, "").trimEnd();
@@ -61,6 +65,9 @@ export function isLikelyIncomplete(
     return false;
   }
 
+  if (ELLIPSIS_AFTER_WORD.test(line)) {
+    return true;
+  }
   if (TERMINAL_PUNCTUATION.test(line) || line.endsWith("|")) {
     return false;
   }
@@ -70,7 +77,12 @@ export function isLikelyIncomplete(
   if (OPEN_DELIMITER.test(line)) {
     return true;
   }
-  if (line.length >= 60 && WORD_CHAR.test(line)) {
+  if (
+    line.length >= MIN_PROSE_LINE &&
+    WORD_CHAR.test(line) &&
+    !LIST_ITEM.test(line) &&
+    !NUMBER_ONLY.test(line)
+  ) {
     return true;
   }
   return false;
@@ -112,13 +124,19 @@ export function mergeContinuation(existing: string, addition: string): string {
  * hold a complete answer while the client lost its tail, so the model must emit
  * only the text after the cutoff rather than declaring the full message complete.
  */
-export function buildContinuationPrompt(previousText?: string): string {
-  const prompt =
-    "The previous answer was cut off before the user received all of it. " +
-    "The text the user already has ends with the excerpt below. Continue from " +
-    "that exact cutoff and output only the text that follows it. Do not repeat " +
-    "any text already shown. If no text follows the cutoff, " +
-    `output exactly ${CONTINUATION_COMPLETE_MARKER}.`;
+export function buildContinuationPrompt(
+  previousText?: string,
+  force = false,
+): string {
+  const prompt = force
+    ? "The excerpt below ends in the middle of a sentence. Do not output " +
+      `${CONTINUATION_COMPLETE_MARKER}. Continue from that exact cutoff and ` +
+      "output only the missing text. Do not repeat any text already shown."
+    : "The previous answer was cut off before the user received all of it. " +
+      "The text the user already has ends with the excerpt below. Continue from " +
+      "that exact cutoff and output only the text that follows it. Do not repeat " +
+      "any text already shown. If no text follows the cutoff, " +
+      `output exactly ${CONTINUATION_COMPLETE_MARKER}.`;
   if (previousText === undefined || previousText.trim() === "") {
     return prompt;
   }
