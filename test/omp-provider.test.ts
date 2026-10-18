@@ -353,6 +353,63 @@ describe("DeepSeek omp provider", () => {
     planner.close();
   });
 
+  test("preserves a reused chat when a later turn fails", async () => {
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const firstDeps = providerDeps({
+      responses: [{ text: "one", messageId: 2 }],
+      planner,
+      scopeKey: "scope-1",
+      buildIncrementalPrompt: (_context, startIndex) => `DELTA:${startIndex}`,
+      onDelete: (id) => deleted.push(id),
+    });
+    const failingDeps = providerDeps({
+      responses: [],
+      planner,
+      scopeKey: "scope-1",
+      buildIncrementalPrompt: (_context, startIndex) => `DELTA:${startIndex}`,
+      completeError: new Error("rate limited"),
+      onDelete: (id) => deleted.push(id),
+    });
+
+    await run(firstDeps, { messages: [{ role: "user", content: "hello" }] });
+    const sink = await run(failingDeps, {
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: [{ type: "text", text: "one" }] },
+        { role: "user", content: "again" },
+      ],
+    });
+
+    expect(sink.failure).toBeDefined();
+    expect(deleted).toEqual([]);
+    expect(
+      planner.plan(
+        "scope-1",
+        { messages: [{ role: "user", content: "hello" }] },
+        "full",
+        () => null,
+      ),
+    ).toMatchObject({ prompt: "full", reused: false });
+    planner.close();
+  });
+
+  test("preserves a completed chat when the response has no message id", async () => {
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [{ text: "one" }],
+      planner,
+      scopeKey: "scope-1",
+      onDelete: (id) => deleted.push(id),
+    });
+
+    const sink = await run(deps, { messages: [{ role: "user", content: "hello" }] });
+    expect(sink.failure).toBeUndefined();
+    expect(deleted).toEqual([]);
+    planner.close();
+  });
+
   test("deletes and invalidates a persistent session on failure", async () => {
     const deleted: string[] = [];
     const planner = new PersistentPlanner({ path: null });

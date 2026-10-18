@@ -204,6 +204,7 @@ export class DeepSeekSseParser {
 
     const rawMessageId =
       this.#ready?.response_message_id ??
+      this.#get("response/message_id") ??
       this.#get("response_message_id");
     const messageId =
       typeof rawMessageId === "number" && Number.isFinite(rawMessageId)

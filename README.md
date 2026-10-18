@@ -198,12 +198,13 @@ these changes:
 - a turn fails, is aborted, or has no response message id
 
 If a stored native session becomes invalid, that turn fails and its mapping is
-invalidated; the next turn starts a fresh full-prompt session.
+invalidated; the next turn starts a fresh full-prompt session. A failed or
+aborted later turn never deletes the pre-existing native chat.
 
 Subagent/task sessions use the same strategy only for their own lifetime and are
-deleted in `session_shutdown`. Title generation, compaction, and other
-tool-less utility calls always use an ephemeral session, so they cannot replace
-the main chat mapping.
+deleted in `session_shutdown`. Title generation is detected by its prompt and
+uses an ephemeral session, so it cannot replace the main chat mapping. Ordinary
+tool-less turns still use the persistent strategy.
 
 Mappings contain only chat/message ids and hashes; no prompt text or tool output
 is stored. They live in a SQLite database at

@@ -62,6 +62,19 @@ describe("DeepSeekSseParser", () => {
     });
   });
 
+  test("uses the response message id when ready metadata is absent", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      [
+        'data: {"v":{"response":{"message_id":42,"status":"WIP","fragments":[]}}}',
+        "",
+        'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
+        "",
+      ].join("\n"),
+    );
+    expect(parser.result().messageId).toBe(42);
+  });
+
   test("keeps THINK and RESPONSE fragments separate", () => {
     const parser = new DeepSeekSseParser();
     parser.feed(

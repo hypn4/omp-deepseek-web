@@ -96,13 +96,10 @@ function createDeepSeekClient(
   });
 }
 
-/** Title generation and compaction are utility calls, not main chat turns. */
+/** Title generation is a utility call, not a main chat turn. */
 function isUtilityCall(context: PromptContext): boolean {
   const system = (context.systemPrompt ?? []).join("\n");
-  if (system.includes("Output only the title wrapped in `<title>`")) {
-    return true;
-  }
-  return (context.tools?.length ?? 0) === 0;
+  return system.includes("Output only the title wrapped in `<title>`");
 }
 
 function ensureDeviceId(): string | null {

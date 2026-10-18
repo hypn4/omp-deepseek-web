@@ -286,6 +286,9 @@ export async function runDeepSeekTurn(
 
     if (signal.aborted) {
       invalidate();
+      // A reused chat may already contain useful history; keep it even though
+      // its mapping is dirty. A fresh chat is safe to delete.
+      keepSession = plan.persistent && plan.reused;
       emitter.fail(signal.reason ?? new Error("DeepSeek request aborted"));
       return;
     }
@@ -320,12 +323,16 @@ export async function runDeepSeekTurn(
         }
         keepSession = true;
       } catch {
-        // A failed metadata write must not leave an unreachable chat behind.
+        // A completed answer is still worth keeping even if its mapping write
+        // failed; the next turn will start with a full prompt instead.
         invalidate();
-        keepSession = false;
+        keepSession = true;
       }
     } else if (plan.persistent) {
       invalidate();
+      // A finished answer without a parent id is still a readable chat. Keep
+      // it; only discard a fresh, incomplete partial response.
+      keepSession = !incomplete || plan.reused;
     }
     emitter.finish({
       text: finalText,
@@ -338,7 +345,9 @@ export async function runDeepSeekTurn(
     );
   } catch (error) {
     invalidate();
-    keepSession = false;
+    // Never delete a pre-existing native chat because a later turn failed.
+    // The mapping is invalidated so the next turn starts with a full prompt.
+    keepSession = plan.persistent && plan.reused;
     const failure = signal.aborted ? (signal.reason ?? error) : tokenError(error);
     emitter.fail(failure);
     deps.onStatus?.("DeepSeek Web: error");
