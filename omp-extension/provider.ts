@@ -109,9 +109,6 @@ export async function runDeepSeekTurn(
   let client: DeepSeekClientLike | null = null;
   let sessionId: string | null = null;
   const signal = options.signal ?? new AbortController().signal;
-  // DeepSeek web only emits tool calls with thinking disabled. Search is
-  // independent and stays on by default.
-  const hasTools = (context.tools?.length ?? 0) > 0;
 
   try {
     client = deps.createClient(token, deviceId);
@@ -138,7 +135,7 @@ export async function runDeepSeekTurn(
         chatSessionId: sessionId,
         prompt,
         refFileIds,
-        thinkingEnabled: hasTools ? false : (options.thinkingEnabled ?? true),
+        thinkingEnabled: options.thinkingEnabled ?? true,
         searchEnabled: options.searchEnabled ?? true,
       },
       signal,

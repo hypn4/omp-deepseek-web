@@ -43,6 +43,24 @@ describe("parseToolCalls", () => {
     expect(calls[0]?.id.length).toBeGreaterThan(0);
   });
 
+  test("parses a tool_calls wrapper whose opening tag omits the leading bar", () => {
+    const text = [
+      `<DSML${PIPE}tool_calls>`,
+      dsmlOpen('invoke name="read"'),
+      dsmlOpen('parameter name="path" string="true"') +
+        "/tmp/x" +
+        dsmlClose(" parameter"),
+      `</invoke>`,
+      `</tool_calls>`,
+    ].join("\n");
+
+    const calls = parseToolCalls(text);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("read");
+    expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
+  });
+
   test("parses a V3.1 block that uses end_of_query as the separator", () => {
     const text = [
       v31("tool_calls_begin"),
@@ -262,6 +280,12 @@ describe("renderToolPrompt", () => {
         dsmlClose(" parameter"),
     );
     expect(prompt).toContain("Rules:");
+    expect(prompt).toContain(
+      "When DeepThink is enabled, keep reasoning in the thinking block and emit the complete tool_calls block in the final RESPONSE.",
+    );
+    expect(prompt).toContain(
+      "Use the exact opening tags shown above; do not omit the leading bar before DSML.",
+    );
     expect(prompt).toContain(
       "Every invoke must include all required parameters; never send an invoke with an empty body.",
     );

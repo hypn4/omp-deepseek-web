@@ -42,12 +42,12 @@ function markerPattern(words: string): string {
 
 /** Opening DSML tag, capturing the attribute text (group 1). */
 function dsmlOpenPattern(name: string): string {
-  return `<\\s*${BAR}\\s*DSML\\s*${BAR}\\s*${name}\\b([^>]*)>`;
+  return `<\\s*(?:${BAR}\\s*)?DSML\\s*${BAR}\\s*${name}\\b([^>]*)>`;
 }
 
 /** Closing DSML tag, with or without the `DSML` marker. */
 function anyClosePattern(name: string): string {
-  return `(?:</\\s*${BAR}\\s*DSML\\s*${BAR}\\s*${name}\\s*>|</\\s*${name}\\s*>)`;
+  return `(?:</\\s*(?:${BAR}\\s*)?DSML\\s*${BAR}\\s*${name}\\s*>|</\\s*${name}\\s*>)`;
 }
 
 interface TaggedBlock {

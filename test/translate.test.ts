@@ -120,6 +120,20 @@ describe("buildPrompt", () => {
 
 
 describe("stripToolMarkup", () => {
+  test("strips an outer tool_calls block without a leading bar", () => {
+    const markup = [
+      `<DSML${PIPE}tool_calls>`,
+      dsmlOpen('invoke name="read"'),
+      dsmlOpen('parameter name="path" string="true"') +
+        "/tmp/x" +
+        dsmlClose(" parameter"),
+      `</invoke>`,
+      `</tool_calls>`,
+    ].join("\n");
+
+    expect(stripToolMarkup(`before\n${markup}\nafter`)).toBe("before\n\nafter");
+  });
+
   test("removes a DSML tool_calls block and keeps the surrounding prose", () => {
     const markup = [
       dsmlOpen("tool_calls"),

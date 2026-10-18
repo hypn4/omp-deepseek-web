@@ -20,11 +20,11 @@ function markerPattern(words: string): string {
 }
 
 const DSML_TOOL_CALLS_BLOCK = new RegExp(
-  `<\\s*${BAR}\\s*DSML\\s*${BAR}\\s*tool_calls\\b[^>]*>[\\s\\S]*?(?:<\\/\\s*${BAR}\\s*DSML\\s*${BAR}\\s*tool_calls\\s*>|<\\/\\s*tool_calls\\s*>)`,
+  `<\\s*(?:${BAR}\\s*)?DSML\\s*${BAR}\\s*tool_calls\\b[^>]*>[\\s\\S]*?(?:<\\/\\s*(?:${BAR}\\s*)?DSML\\s*${BAR}\\s*tool_calls\\s*>|<\\/\\s*tool_calls\\s*>)`,
   "g",
 );
 const DSML_UNCLOSED_BLOCK = new RegExp(
-  `<\\s*${BAR}\\s*DSML\\s*${BAR}\\s*tool_calls\\b[^>]*>[\\s\\S]*$`,
+  `<\\s*(?:${BAR}\\s*)?DSML\\s*${BAR}\\s*tool_calls\\b[^>]*>[\\s\\S]*$`,
   "g",
 );
 const V31_TOOL_CALLS_BLOCK = new RegExp(

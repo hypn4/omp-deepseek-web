@@ -197,6 +197,15 @@ export class DeepSeekSseParser {
       return;
     }
 
+    if (op === "") {
+      if (typeof value === "string") {
+        this.#append(path, value);
+      } else {
+        this.#setAtPath(path, value);
+      }
+      return;
+    }
+
     if (op === "APPEND") {
       this.#append(path, value);
       return;

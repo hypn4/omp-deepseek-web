@@ -99,6 +99,25 @@ describe("DeepSeekSseParser", () => {
     }
   });
 
+  test("appends a path patch that omits the operation", () => {
+    const parser = new DeepSeekSseParser();
+    parser.feed(
+      [
+        'data: {"v":{"response":{"fragments":[{"type":"THINK","content":"The"}]}}}',
+        'data: {"p":"response/fragments","o":"APPEND","v":[{"type":"RESPONSE","content":"#"}]}',
+        'data: {"p":"response/fragments/-1/content","v":" deep"}',
+        'data: {"v":"seek"}',
+        "",
+      ].join("\n\n"),
+    );
+
+    expect(parser.result()).toEqual({
+      text: "# deepseek",
+      thinking: "The",
+      finished: false,
+    });
+  });
+
   test("ignores an unpathed __proto__ key", () => {
     const parser = new DeepSeekSseParser();
     parser.feed(

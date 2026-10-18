@@ -202,7 +202,7 @@ describe("DeepSeek omp provider", () => {
     );
 
     expect(sink.failure).toBeUndefined();
-    expect(request?.thinkingEnabled).toBe(false);
+    expect(request?.thinkingEnabled).toBe(true);
     expect(request?.searchEnabled).toBe(true);
     expect(sink.ended?.stopReason).toBe("toolUse");
     expect(sink.ended?.content).toEqual([
