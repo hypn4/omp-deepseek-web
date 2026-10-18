@@ -1,10 +1,13 @@
-# deepseek-web
+# omp-deepseek-web
 
 Use a free [chat.deepseek.com](https://chat.deepseek.com) account as an
 [omp](https://github.com/can1357/oh-my-pi) provider.
 
 The provider runs inside omp as a command-backed extension. There is no local
 HTTP proxy, port, or model gateway.
+
+The provider and model id remain `deepseek-web/deepseek-web`; only the
+repository and plugin package name changed.
 
 > **Unofficial.** This project is not affiliated with DeepSeek. The web API is
 > undocumented and may change without notice. Automated use of free web chat may
@@ -58,8 +61,8 @@ flowchart LR
 Clone the repository and verify the test suite:
 
 ```bash
-git clone https://github.com/hypn4/deepseek-web.git deepseek-web
-cd deepseek-web
+git clone https://github.com/hypn4/omp-deepseek-web.git omp-deepseek-web
+cd omp-deepseek-web
 bun install
 bun test
 ```
@@ -100,18 +103,19 @@ popup.
 **Recommended:** install the published GitHub repository as an omp plugin:
 
 ```bash
-omp plugin install github:hypn4/deepseek-web
+omp plugin install github:hypn4/omp-deepseek-web
 ```
 
 This is the primary installation path. The plugin manifest loads
 `omp-extension/index.ts`, so no `models.yml` entry or manual `extensions:` edit
-is required. Manage it with `omp plugin list`, `omp plugin upgrade deepseek-web`,
-`omp plugin disable deepseek-web`, or `omp plugin uninstall deepseek-web`.
+is required. Manage it with `omp plugin list`, `omp plugin upgrade omp-deepseek-web`,
+`omp plugin disable omp-deepseek-web`, or
+`omp plugin uninstall omp-deepseek-web`.
 
 For local development from a clone, use `plugin link` instead:
 
 ```bash
-omp plugin link /path/to/deepseek-web
+omp plugin link /path/to/omp-deepseek-web
 ```
 
 `link` symlinks the working tree and is intended for development; normal users
@@ -120,7 +124,7 @@ should use `omp plugin install`.
 For one-off development, load the extension explicitly instead:
 
 ```bash
-omp -e /path/to/deepseek-web/omp-extension/index.ts \
+omp -e /path/to/omp-deepseek-web/omp-extension/index.ts \
   --model deepseek-web/deepseek-web
 ```
 
@@ -128,7 +132,7 @@ You can also add the extension path to `~/.omp/agent/config.yml`:
 
 ```yaml
 extensions:
-  - /path/to/deepseek-web/omp-extension/index.ts
+  - /path/to/omp-deepseek-web/omp-extension/index.ts
 ```
 
 `extensions` replaces the array from lower-precedence settings, so keep any
@@ -151,7 +155,7 @@ Quick non-interactive check:
 
 ```bash
 omp --no-extensions \
-  -e /path/to/deepseek-web/omp-extension/index.ts \
+  -e /path/to/omp-deepseek-web/omp-extension/index.ts \
   --model deepseek-web/deepseek-web \
   -p "Reply with exactly: OK"
 ```
