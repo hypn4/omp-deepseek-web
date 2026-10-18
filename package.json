@@ -8,6 +8,9 @@
   "engines": {
     "bun": ">=1.0.0"
   },
+  "omp": {
+    "extensions": ["./omp-extension/index.ts"]
+  },
   "scripts": {
     "test": "bun test",
     "install-native-host": "bun extension/install.ts"

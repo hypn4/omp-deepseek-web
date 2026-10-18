@@ -95,9 +95,33 @@ next poll. The status badge is `✓` when synced, `…` while syncing, and `!` w
 token or native-host error needs attention. Click the icon to open the status
 popup.
 
-### 2. Load the omp extension
+### 2. Install the omp provider
 
-Add the absolute path to `~/.omp/agent/config.yml`:
+The recommended path is to install this repository as an omp plugin. From a
+local clone:
+
+```bash
+omp plugin link /path/to/deepseek-web
+```
+
+From a published GitHub repository:
+
+```bash
+omp plugin install github:<owner>/deepseek-web
+```
+
+The plugin manifest loads `omp-extension/index.ts`, so no `models.yml` entry or
+manual `extensions:` edit is required. Manage it with `omp plugin list`,
+`omp plugin disable deepseek-web`, or `omp plugin uninstall deepseek-web`.
+
+For one-off development, load the extension explicitly instead:
+
+```bash
+omp -e /path/to/deepseek-web/omp-extension/index.ts \
+  --model deepseek-web/deepseek-web
+```
+
+You can also add the extension path to `~/.omp/agent/config.yml`:
 
 ```yaml
 extensions:
@@ -105,14 +129,7 @@ extensions:
 ```
 
 `extensions` replaces the array from lower-precedence settings, so keep any
-existing entries in the same list. To load it for one session instead:
-
-```bash
-omp -e /path/to/deepseek-web/omp-extension/index.ts \
-  --model deepseek-web/deepseek-web
-```
-
-No `models.yml` entry is required; the extension registers the model itself.
+existing entries in the same list.
 
 ### 3. Run
 
