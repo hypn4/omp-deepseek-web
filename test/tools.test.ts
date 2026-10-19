@@ -43,6 +43,21 @@ describe("parseToolCalls", () => {
     expect(calls[0]?.id.length).toBeGreaterThan(0);
   });
 
+  test("strips a malformed closing parameter tail from a string argument", () => {
+    const malformedClose = `${PIPE}DSML${PIPE} parameter>`;
+    const text = [
+      dsmlOpen("tool_calls"),
+      dsmlOpen('invoke name="read"'),
+      dsmlOpen('parameter name="path" string="true"') + "/tmp/x" + malformedClose,
+      `</invoke>`,
+      `</tool_calls>`,
+    ].join("\n");
+
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
+  });
+
   test("parses a tool_calls wrapper whose opening tag omits the leading bar", () => {
     const text = [
       `<DSML${PIPE}tool_calls>`,
@@ -348,6 +363,29 @@ describe("renderToolResults", () => {
     expect(text).toContain(
       "Continue the task using the tool results above. Do not repeat a tool call unless it is necessary.",
     );
+  });
+
+  test("removes a malformed DSML tail from replayed tool arguments", () => {
+    const malformedClose = `${PIPE}DSML${PIPE} parameter>`;
+    const text = renderToolResults([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "read",
+              arguments: JSON.stringify({ path: `/tmp/x${malformedClose}` }),
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(text).toContain("/tmp/x");
+    expect(text).not.toContain(`/tmp/x${PIPE}`);
   });
 
   test("does not append the continuation prompt when the last message is not a tool result", () => {

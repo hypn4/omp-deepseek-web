@@ -303,7 +303,9 @@ bun extension/install.ts --uninstall
   invoke; the partial result is surfaced with a length-stop warning.
 - **Text tool bridge.** DeepSeek web has no native tool calling. Tool calls are
   parsed from a prompted format and can break if the model or hidden system
-  prompt changes.
+  prompt changes. Malformed closing tags that leak into string arguments are
+  stripped before tool execution and history replay; unrecoverable markup still
+  surfaces as a tool-call failure.
 - **Images are per-turn.** Uploads and parsing failures surface as the turn
   error. Persistent native history may retain earlier uploaded images according
   to DeepSeek's own retention behavior.

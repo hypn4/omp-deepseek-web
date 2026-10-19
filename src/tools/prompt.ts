@@ -54,6 +54,7 @@ export function renderToolPrompt(tools: OpenAITool[]): string {
     "- When DeepThink is enabled, keep reasoning in the thinking block and emit the complete tool_calls block in the final RESPONSE.",
     "- Use the exact opening tags shown above; do not omit the leading bar before DSML.",
     "- Every invoke must include all required parameters; never send an invoke with an empty body.",
+    "- Every parameter needs both its opening and closing tag; never omit the leading `</` in a closing tag.",
     '- `string="true"` keeps the value as a raw string; `string="false"` parses JSON.',
     "- Do not wrap the call in prose.",
   ].join("\n");

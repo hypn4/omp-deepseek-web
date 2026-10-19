@@ -27,6 +27,20 @@ const WORD_BOUNDARY = String.fromCharCode(0x2581);
 /** Either the canonical fullwidth bar or an ASCII pipe (degraded output). */
 const BAR = `(?:${FULLWIDTH_BAR}|\\|)`;
 
+/**
+ * Models occasionally omit the leading `<`/`/` of a closing DSML tag, leaving
+ * text such as `<bar>DSML<bar> parameter>` attached to the preceding string.
+ * Treat that trailing artifact as protocol markup, not tool data.
+ */
+const MALFORMED_DSML_TAIL = new RegExp(
+  `(?:<)?(?:/)?(?:${BAR})?DSML(?:${BAR})\\s*(?:parameter|invoke|tool_calls)>\\s*$`,
+  "u",
+);
+
+export function stripMalformedDsmlTail(value: string): string {
+  return value.replace(MALFORMED_DSML_TAIL, "");
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -131,7 +145,9 @@ function parseDsmlParameters(body: string): Record<string, unknown> | null {
     if (!name) {
       continue;
     }
-    const raw = decodeEntities(body.slice(parameter.bodyStart, parameter.bodyEnd));
+    const raw = stripMalformedDsmlTail(
+      decodeEntities(body.slice(parameter.bodyStart, parameter.bodyEnd)),
+    );
     if (attributes.string === "false") {
       try {
         args[name] = JSON.parse(raw.trim());

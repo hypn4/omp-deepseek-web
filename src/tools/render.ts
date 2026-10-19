@@ -1,4 +1,5 @@
 import type { OpenAIMessage, OpenAIToolCall } from "../openai/types";
+import { stripMalformedDsmlTail } from "./parser";
 
 const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
 
@@ -39,7 +40,7 @@ function renderToolCalls(calls: OpenAIToolCall[]): string {
       for (const [key, value] of Object.entries(parameters)) {
         if (typeof value === "string") {
           lines.push(
-            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="true">${escapeDsmlText(value)}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
+            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="true">${escapeDsmlText(stripMalformedDsmlTail(value))}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
           );
         } else {
           lines.push(
