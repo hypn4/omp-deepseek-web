@@ -163,6 +163,25 @@ describe("omp prompt adapter", () => {
     expect(result).not.toContain("web_search");
   });
 
+  test("places a handoff before the transcript", () => {
+    const result = buildOmpPrompt(
+      {
+        systemPrompt: ["system"],
+        messages: [{ role: "user", content: "continue" }],
+        tools: [READ_TOOL],
+      },
+      (tool) => (tool.name === "read" ? READ_SCHEMA : { type: "object" }),
+      { handoff: "## Session handoff\nresume here" },
+    );
+    expect(result).toContain("## Session handoff");
+    expect(result.indexOf("## Session handoff")).toBeLessThan(
+      result.indexOf("User:\ncontinue"),
+    );
+    expect(result.indexOf("## Session handoff")).toBeGreaterThan(
+      result.indexOf("### read"),
+    );
+  });
+
   test("builds a delta prompt without repeating the system/tool block", () => {
     const result = buildOmpIncrementalPrompt(
       {

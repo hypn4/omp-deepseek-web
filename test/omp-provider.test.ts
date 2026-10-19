@@ -155,6 +155,13 @@ function providerDeps(options: {
   scopeKey?: string;
   requestGate?: RequestGate;
   taskDelayMs?: number;
+  cwd?: string;
+  buildHandoff?: (
+    context: PromptContext,
+    reason: string,
+    cwd: string,
+  ) => string | null;
+  buildPrompt?: (context: PromptContext, handoff?: string) => string;
   buildIncrementalPrompt?: (context: PromptContext, startIndex: number) => string | null;
   sessionIds?: string[];
 }): ProviderDeps {
@@ -206,12 +213,18 @@ function providerDeps(options: {
     readToken: () => (options.token === undefined ? "stored-token" : options.token),
     readDeviceId: () => "device-1",
     createClient: () => client,
-    buildPrompt: () => "rendered prompt",
+    buildPrompt:
+      options.buildPrompt ??
+      (() => "rendered prompt"),
     ...(options.onStatus === undefined ? {} : { onStatus: options.onStatus }),
     ...(options.planner === undefined ? {} : { planner: options.planner }),
     ...(options.scopeKey === undefined ? {} : { scopeKey: options.scopeKey }),
     ...(options.requestGate === undefined ? {} : { requestGate: options.requestGate }),
     ...(options.taskDelayMs === undefined ? {} : { taskDelayMs: options.taskDelayMs }),
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.buildHandoff === undefined
+      ? {}
+      : { buildHandoff: options.buildHandoff }),
     ...(options.buildIncrementalPrompt === undefined
       ? {}
       : { buildIncrementalPrompt: options.buildIncrementalPrompt }),
@@ -248,6 +261,39 @@ describe("DeepSeek omp provider", () => {
     expect(sink.ended?.content).toEqual([{ type: "text", text: "hello" }]);
     expect(sink.ended?.stopReason).toBe("stop");
     expect(deleted).toEqual(["session-1"]);
+  });
+
+  test("adds a handoff only when a fresh native chat is created", async () => {
+    const prompts: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [
+        { text: "one", messageId: 2 },
+        { text: "two", messageId: 4 },
+      ],
+      planner,
+      scopeKey: "scope-1",
+      buildIncrementalPrompt: (_context, startIndex) => `DELTA:${startIndex}`,
+      buildHandoff: (_context, reason, cwd) => `HANDOFF:${reason}:${cwd}`,
+      buildPrompt: (_context, handoff) =>
+        handoff === undefined
+          ? "rendered prompt"
+          : `rendered prompt\n\n${handoff}`,
+      cwd: "/tmp/project",
+      onComplete: (request) => prompts.push(request.prompt),
+    });
+
+    await run(deps, { messages: [{ role: "user", content: "hello" }] });
+    await run(deps, {
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: [{ type: "text", text: "one" }] },
+        { role: "user", content: "again" },
+      ],
+    });
+
+    expect(prompts[0]).toContain("HANDOFF:new:/tmp/project");
+    expect(prompts[1]).toBe("DELTA:2");
   });
 
   test("reuses a persistent session and sends an incremental prompt", async () => {

@@ -1,5 +1,6 @@
 import type { OpenAIMessage, OpenAITool, OpenAIToolCall } from "../src/openai/types";
 import { buildPrompt } from "../src/openai/translate";
+import type { BuildPromptOptions } from "../src/openai/translate";
 import { renderToolResults } from "../src/tools/render";
 
 export interface PromptTextPart {
@@ -201,6 +202,7 @@ export function buildOmpIncrementalPrompt(
 export function buildOmpPrompt(
   context: PromptContext,
   toolSchema: ToolSchemaResolver,
+  options: BuildPromptOptions = {},
 ): string {
   const systemParts = [...(context.systemPrompt ?? [])];
   const messages: OpenAIMessage[] = [];
@@ -240,5 +242,5 @@ export function buildOmpPrompt(
     },
   }));
 
-  return buildPrompt(messages, tools);
+  return buildPrompt(messages, tools, options);
 }

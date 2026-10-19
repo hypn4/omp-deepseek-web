@@ -29,6 +29,14 @@ export interface StoredSession {
   updatedAt: number;
 }
 
+export type ResetReason =
+  | "new"
+  | "system"
+  | "tools"
+  | "prefix"
+  | "no-delta"
+  | "developer";
+
 export interface ConversationPlan {
   /** Prompt sent for this turn. */
   prompt: string;
@@ -40,6 +48,8 @@ export interface ConversationPlan {
   persistent: boolean;
   /** True only when the prompt is an incremental continuation. */
   reused: boolean;
+  /** Why a fresh full-prompt chat was chosen. */
+  resetReason?: ResetReason;
 }
 
 export interface ConversationPlanner {
@@ -256,7 +266,12 @@ export class PersistentPlanner implements ConversationPlanner {
 
     const row = this.#select.get(scopeKey) as SessionRow | null;
     if (row === null) {
-      return { prompt: fullPrompt, persistent: true, reused: false };
+      return {
+        prompt: fullPrompt,
+        persistent: true,
+        reused: false,
+        resetReason: "new",
+      };
     }
     const record = toStoredSession(row);
 
@@ -267,6 +282,7 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
+        resetReason: record.systemHash !== systemHash ? "system" : "tools",
       };
     }
 
@@ -278,6 +294,7 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
+        resetReason: "prefix",
       };
     }
 
@@ -291,6 +308,7 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
+        resetReason: "no-delta",
       };
     }
 
@@ -300,6 +318,7 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
+        resetReason: "developer",
       };
     }
 
@@ -309,6 +328,7 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
+        resetReason: "no-delta",
       };
     }
 

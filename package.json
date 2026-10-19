@@ -1,6 +1,6 @@
 {
   "name": "omp-deepseek-web",
-  "version": "0.8.4",
+  "version": "0.9.0",
   "description": "Use a free chat.deepseek.com account as an omp provider",
   "repository": "github:hypn4/omp-deepseek-web",
   "private": true,

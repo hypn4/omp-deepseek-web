@@ -19,7 +19,7 @@ import type { EventSink, ModelIdentity } from "./events";
 import { StreamingCompletion } from "./events";
 import { collectTurnImages } from "./prompt";
 import type { PromptContext, PromptImage } from "./prompt";
-import type { ConversationPlanner } from "./conversation";
+import type { ConversationPlanner, ResetReason } from "./conversation";
 import { EphemeralPlanner } from "./conversation";
 
 export interface DeepSeekClientLike {
@@ -50,13 +50,21 @@ export interface ProviderDeps {
   readToken(): string | null;
   readDeviceId(): string | null;
   createClient(token: string, deviceId: string): DeepSeekClientLike;
-  buildPrompt(context: PromptContext): string;
+  buildPrompt(context: PromptContext, handoff?: string): string;
   onStatus?(status: string | null): void;
   requestGate?: RequestGate;
   /** Persistent or ephemeral conversation strategy. */
   planner?: ConversationPlanner;
   /** Stable OMP session/subagent key for persistent mappings. */
   scopeKey?: string;
+  /** Current OMP working directory. */
+  cwd?: string;
+  /** Builds a bounded handoff when a fresh native chat is created. */
+  buildHandoff?(
+    context: PromptContext,
+    reason: ResetReason,
+    cwd: string,
+  ): string | null;
   /** Minimum delay after any completed turn before the next request. */
   taskDelayMs?: number;
   /** Renders only messages after the previous turn, for session reuse. */
@@ -194,7 +202,21 @@ export async function runDeepSeekTurn(
     stream.fail(tokenError(error));
     return;
   }
-  const prompt = plan.prompt;
+  let prompt = plan.prompt;
+  if (plan.persistent && !plan.reused && deps.buildHandoff !== undefined) {
+    try {
+      const handoff = deps.buildHandoff(
+        context,
+        plan.resetReason ?? "new",
+        deps.cwd ?? "",
+      );
+      if (handoff !== null && handoff.trim() !== "") {
+        prompt = deps.buildPrompt(context, handoff);
+      }
+    } catch {
+      // Handoff is best-effort; the full OMP prompt remains authoritative.
+    }
+  }
   const invalidate = (): void => {
     if (!plan.persistent) {
       return;

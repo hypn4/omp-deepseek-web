@@ -216,6 +216,12 @@ permissions. The store is bounded by a 7-day TTL and a hard entry cap
 their native chats best-effort; SQLite WAL and incremental vacuum avoid
 rewriting the whole store on every turn.
 
+When a fresh native chat is created, the provider appends a bounded session
+handoff generated from the current OMP context: cwd, git branch, changed-file
+names, the current request, and a truncated previous assistant result. It never
+reads project file contents or other OMP session transcripts. Disable this with
+`DEEPSEEK_WEB_HANDOFF=off`.
+
 To restore the old behavior:
 
 ```bash
@@ -244,6 +250,7 @@ In ephemeral mode every provider call creates and deletes its own DeepSeek chat.
 | `DEEPSEEK_WEB_SESSION_STORE` | `~/.omp/agent/deepseek-web-sessions.sqlite` | Owner-only SQLite mapping database for persistent sessions. |
 | `DEEPSEEK_WEB_SESSION_TTL_MS` | `604800000` | Drop unused mappings after 7 days; their native chats are deleted best-effort. |
 | `DEEPSEEK_WEB_SESSION_MAX_ENTRIES` | `1024` | Hard cap; the oldest mappings are evicted first and their native chats are deleted. |
+| `DEEPSEEK_WEB_HANDOFF` | `summary` | Inject a bounded cwd/git/request handoff when a fresh native chat is created. Set `off` to disable. |
 | `DEEPSEEK_WEB_TOKEN_CMD` | — | Advanced fallback command whose stdout is a fresh token after an auth failure. |
 
 The token and device id are stored at:

@@ -16,6 +16,7 @@ import {
 import { RequestGate } from "../src/deepseek/rate-limit";
 import type { PromptContext, PromptTool } from "./prompt";
 import { buildOmpIncrementalPrompt, buildOmpPrompt } from "./prompt";
+import { buildResetHandoff } from "./handoff";
 import type { ConversationPlanner } from "./conversation";
 import {
   DEFAULT_SESSION_MAX_ENTRIES,
@@ -116,9 +117,12 @@ function ensureDeviceId(): string | null {
   return generated;
 }
 
-function promptFor(context: PromptContext): string {
-  return buildOmpPrompt(context, (tool: PromptTool) =>
-    toolWireSchema(tool as Parameters<typeof toolWireSchema>[0]),
+function promptFor(context: PromptContext, handoff?: string): string {
+  return buildOmpPrompt(
+    context,
+    (tool: PromptTool) =>
+      toolWireSchema(tool as Parameters<typeof toolWireSchema>[0]),
+    { handoff },
   );
 }
 
@@ -198,6 +202,12 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
           createClient: createDeepSeekClient,
           buildPrompt: promptFor,
           buildIncrementalPrompt: buildOmpIncrementalPrompt,
+          buildHandoff:
+            process.env.DEEPSEEK_WEB_HANDOFF === "off"
+              ? undefined
+              : (context, reason, cwd) =>
+                  buildResetHandoff({ context, reason, cwd }),
+          cwd: activeContext?.cwd ?? process.cwd(),
           onStatus: setStatus,
           requestGate,
           planner: isUtilityCall(context as unknown as PromptContext)

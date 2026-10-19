@@ -57,7 +57,16 @@ const RESPONSE_LANGUAGE_RULE = [
  * `renderToolResults`). System messages are emitted once, ahead of the tool
  * block, because `renderToolResults` intentionally skips them.
  */
-export function buildPrompt(messages: OpenAIMessage[], tools: OpenAITool[]): string {
+export interface BuildPromptOptions {
+  /** Optional bounded handoff inserted before the transcript. */
+  handoff?: string;
+}
+
+export function buildPrompt(
+  messages: OpenAIMessage[],
+  tools: OpenAITool[],
+  options: BuildPromptOptions = {},
+): string {
   const system = messages
     .filter((message) => message.role === "system")
     .map((message) => message.content ?? "")
@@ -84,6 +93,9 @@ export function buildPrompt(messages: OpenAIMessage[], tools: OpenAITool[]): str
   }
   if (toolPrompt.length > 0) {
     blocks.push(toolPrompt);
+  }
+  if (options.handoff !== undefined && options.handoff.trim() !== "") {
+    blocks.push(options.handoff);
   }
   if (transcript.length > 0) {
     blocks.push(RESPONSE_LANGUAGE_RULE);
