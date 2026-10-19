@@ -58,6 +58,25 @@ describe("parseToolCalls", () => {
     expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
   });
 
+  test("recovers subsequent parameters after a malformed closing tag", () => {
+    const malformedClose = `${PIPE}DSML${PIPE} parameter>`;
+    const text = [
+      dsmlOpen("tool_calls"),
+      dsmlOpen('invoke name="read"'),
+      dsmlOpen('parameter name="path" string="true"') + "/tmp/x" + malformedClose,
+      dsmlOpen('parameter name="i" string="true"') + "Reading" + dsmlClose(" parameter"),
+      `</invoke>`,
+      `</tool_calls>`,
+    ].join("\n");
+
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0]!.arguments)).toEqual({
+      path: "/tmp/x",
+      i: "Reading",
+    });
+  });
+
   test("parses a tool_calls wrapper whose opening tag omits the leading bar", () => {
     const text = [
       `<DSML${PIPE}tool_calls>`,

@@ -59,9 +59,9 @@ function dsmlOpenPattern(name: string): string {
   return `<\\s*(?:${BAR}\\s*)*DSML\\s*(?:${BAR}\\s*)*${name}\\b([^>]*)>`;
 }
 
-/** Closing DSML tag, with or without the `DSML` marker. */
+/** Closing DSML tag, including a missing `<`/`/` recovery form. */
 function anyClosePattern(name: string): string {
-  return `(?:</\\s*(?:${BAR}\\s*)*DSML\\s*(?:${BAR}\\s*)*${name}\\s*>|</\\s*${name}\\s*>)`;
+  return `(?:</\\s*(?:${BAR}\\s*)*DSML\\s*(?:${BAR}\\s*)*${name}\\s*>|</\\s*${name}\\s*>|(?:<)?(?:/)?(?:${BAR})?DSML(?:${BAR})\\s*${name}\\s*>)`;
 }
 
 interface TaggedBlock {
