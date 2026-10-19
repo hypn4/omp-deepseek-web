@@ -305,8 +305,9 @@ bun extension/install.ts --uninstall
 - **Text tool bridge.** DeepSeek web has no native tool calling. The provider
   uses `@@OMP_TOOL_CALLS@@` followed by one JSON object; there are no
   per-parameter tags or closing tags to corrupt. The parser reads a balanced JSON
-  object, and history is replayed in the same format. Legacy DSML parsing remains
-  only for old in-flight sessions and is never emitted by the prompt or history.
+  object, and history is replayed in the same format. Legacy DSML/DSOL parsing
+  remains only for old in-flight sessions; legacy tool markup is stripped from
+  system, developer, assistant, and handoff history before prompting.
 - **Images are per-turn.** Uploads and parsing failures surface as the turn
   error. Persistent native history may retain earlier uploaded images according
   to DeepSeek's own retention behavior.

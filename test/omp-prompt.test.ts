@@ -163,6 +163,29 @@ describe("omp prompt adapter", () => {
     expect(result).not.toContain("web_search");
   });
 
+  test("removes legacy DSOL markup from system, developer, and assistant text", () => {
+    const pipe = String.fromCharCode(0xff5c);
+    const legacy = [
+      `<${pipe}DSOL${pipe}tool_calls>`,
+      `<${pipe}DSOL${pipe}invoke name="read">`,
+      `<${pipe}DSOL${pipe}parameter name="path" string="true">/tmp/x</${pipe}DSOL${pipe}parameter>`,
+      `</${pipe}DSOL${pipe}invoke>`,
+      `</${pipe}DSOL${pipe}tool_calls>`,
+    ].join("\n");
+    const result = buildOmpPrompt(
+      {
+        systemPrompt: [`system ${legacy}`],
+        messages: [
+          { role: "developer", content: `rule ${legacy}` },
+          { role: "assistant", content: [{ type: "text", text: `answer ${legacy}` }] },
+          { role: "user", content: "continue" },
+        ],
+      },
+      () => ({ type: "object" }),
+    );
+    expect(result).not.toContain("DSOL");
+  });
+
   test("places a handoff before the transcript", () => {
     const result = buildOmpPrompt(
       {

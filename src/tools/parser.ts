@@ -291,7 +291,9 @@ function parseV31Calls(text: string): ParsedToolCall[] {
 }
 
 function parseLegacyToolCalls(text: string): ParsedToolCall[] {
-  return [...parseDsmlCalls(text), ...parseV31Calls(text)];
+  // DSOL is an observed model corruption of the legacy DSML marker.
+  const normalized = text.replace(/DSOL/g, "DSML");
+  return [...parseDsmlCalls(normalized), ...parseV31Calls(normalized)];
 }
 
 export function parseToolCalls(text: string): ParsedToolCall[] {

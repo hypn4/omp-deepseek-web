@@ -112,7 +112,9 @@ export function buildPrompt(
  * parse is ordinary assistant text.
  */
 export function stripToolMarkup(text: string): string {
+  // DSOL is an observed model corruption of the legacy DSML marker.
   return stripProtocolBlocks(text)
+    .replace(/DSOL/g, "DSML")
     .replace(DSML_TOOL_CALLS_BLOCK, "")
     .replace(V31_TOOL_CALLS_BLOCK, "")
     .replace(DSML_UNCLOSED_BLOCK, "")

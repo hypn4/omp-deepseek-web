@@ -28,6 +28,19 @@ function dsmlCall(name: string, parameters: string[]): string[] {
 }
 
 describe("parseToolCalls", () => {
+  test("normalizes DSOL as a DSML aliases", () => {
+    const text = [
+      `<${PIPE}DSOL${PIPE}tool_calls>`,
+      `<${PIPE}DSOL${PIPE}invoke name="read">`,
+      `<${PIPE}DSOL${PIPE}parameter name="path" string="true">/tmp/x</${PIPE}DSOL${PIPE}parameter>`,
+      `</${PIPE}DSOL${PIPE}invoke>`,
+      `</${PIPE}DSOL${PIPE}tool_calls>`,
+    ].join("\n");
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.arguments).toBe('{"path":"/tmp/x"}');
+  });
+
   test("parses the marker JSON protocol with multiple calls", () => {
     const text = [
       TOOL_CALL_MARKER,

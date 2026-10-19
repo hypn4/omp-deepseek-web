@@ -141,6 +141,11 @@ describe("stripToolMarkup", () => {
     expect(stripToolMarkup(`before\n${markup}\nafter`)).toBe("before\n\nafter");
   });
 
+  test("removes a DSOL block and normalizes the legacy marker", () => {
+    const text = `<${PIPE}DSOL${PIPE}tool_calls>\n<${PIPE}DSOL${PIPE}invoke name="read">\n<${PIPE}DSOL${PIPE}parameter name="path" string="true">/tmp/x</${PIPE}DSOL${PIPE}parameter>\n</${PIPE}DSOL${PIPE}invoke>\n</${PIPE}DSOL${PIPE}tool_calls>`;
+    expect(stripToolMarkup(`before\n${text}\nafter`)).toBe("before\n\nafter");
+  });
+
   test("removes a JSON protocol block and keeps the surrounding prose", () => {
     expect(
       stripToolMarkup(

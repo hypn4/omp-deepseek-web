@@ -1,5 +1,5 @@
 import type { OpenAIMessage, OpenAITool, OpenAIToolCall } from "../src/openai/types";
-import { buildPrompt } from "../src/openai/translate";
+import { buildPrompt, stripToolMarkup } from "../src/openai/translate";
 import type { BuildPromptOptions } from "../src/openai/translate";
 import { renderToolResults } from "../src/tools/render";
 
@@ -145,7 +145,7 @@ function toAssistantMessage(
   const toolCalls: OpenAIToolCall[] = [];
   for (const part of content) {
     if (part.type === "text") {
-      text.push(part.text);
+      text.push(stripToolMarkup(part.text));
     } else if (part.type === "toolCall") {
       toolCalls.push(toToolCall(part));
     }
@@ -173,12 +173,16 @@ export function buildOmpIncrementalPrompt(
   const messages: OpenAIMessage[] = [];
   for (const message of context.messages.slice(startIndex)) {
     switch (message.role) {
-      case "developer":
-        messages.push({
-          role: "user",
-          content: `Developer instruction:\n${textContent(message.content)}`,
-        });
+      case "developer": {
+        const sanitized = stripToolMarkup(textContent(message.content)).trim();
+        if (sanitized !== "") {
+          messages.push({
+            role: "user",
+            content: `Developer instruction:\n${sanitized}`,
+          });
+        }
         break;
+      }
       case "user":
         messages.push({ role: "user", content: textContent(message.content) });
         break;
@@ -208,14 +212,20 @@ export function buildOmpPrompt(
   toolSchema: ToolSchemaResolver,
   options: BuildPromptOptions = {},
 ): string {
-  const systemParts = [...(context.systemPrompt ?? [])];
+  const systemParts = (context.systemPrompt ?? [])
+    .map((part) => stripToolMarkup(part))
+    .filter((part) => part.trim() !== "");
   const messages: OpenAIMessage[] = [];
 
   for (const message of context.messages) {
     switch (message.role) {
-      case "developer":
-        systemParts.push(textContent(message.content));
+      case "developer": {
+        const sanitized = stripToolMarkup(textContent(message.content)).trim();
+        if (sanitized !== "") {
+          systemParts.push(sanitized);
+        }
         break;
+      }
       case "user":
         messages.push({ role: "user", content: textContent(message.content) });
         break;

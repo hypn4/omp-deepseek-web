@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { PromptContext, PromptMessage } from "./prompt";
+import { stripToolMarkup } from "../src/openai/translate";
 import type { ResetReason } from "./conversation";
 
 export interface HandoffInput {
@@ -99,7 +100,9 @@ export function buildResetHandoff(input: HandoffInput): string | null {
     .find((message) => message.role === "assistant");
 
   const current = latestUser ? truncate(textOf(latestUser)) : "";
-  const previous = latestAssistant ? truncate(textOf(latestAssistant)) : "";
+  const previous = latestAssistant
+    ? truncate(stripToolMarkup(textOf(latestAssistant)))
+    : "";
   const git = cwd === "" ? null : gitState(cwd);
 
   const sections: string[] = [
