@@ -207,6 +207,10 @@ export default function deepseekWebExtension(pi: ExtensionAPI): void {
             activeContext?.sessionManager.getSessionId() ??
             options?.sessionId ??
             "",
+          taskDelayMs: resolveNonNegativeInt(
+            process.env.DEEPSEEK_WEB_TASK_DELAY_MS,
+            3_000,
+          ),
         },
         { api: model.api, provider: model.provider, id: model.id },
         context as unknown as PromptContext,

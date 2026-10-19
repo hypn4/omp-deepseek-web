@@ -236,7 +236,8 @@ In ephemeral mode every provider call creates and deletes its own DeepSeek chat.
 | `DEEPSEEK_WEB_RATE_LIMIT_RETRIES` | `100` | Retry a rate-limit hint only when no text/thinking was emitted; capped at 100. |
 | `DEEPSEEK_WEB_RATE_LIMIT_DELAY_MS` | `10000` | Initial backoff; doubles per retry (10s, 20s, 40s, ...). |
 | `DEEPSEEK_WEB_RATE_LIMIT_MAX_DELAY_MS` | `60000` | Upper bound for exponential backoff; a server-supplied retry delay is used verbatim. |
-| `DEEPSEEK_WEB_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum spacing between requests from this process, shared across sessions and tool loops. |
+| `DEEPSEEK_WEB_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum spacing between request starts from this process, shared across sessions and tool loops. |
+| `DEEPSEEK_WEB_TASK_DELAY_MS` | `3000` | Additional cooldown after each completed turn, including tool-loop turns. Applies before the next request. |
 | `DEEPSEEK_WEB_SESSION_MODE` | `persistent` | `persistent` reuses one native chat per omp conversation; `ephemeral` creates and deletes a chat per provider call. |
 | `DEEPSEEK_WEB_SESSION_STORE` | `~/.omp/agent/deepseek-web-sessions.sqlite` | Owner-only SQLite mapping database for persistent sessions. |
 | `DEEPSEEK_WEB_SESSION_TTL_MS` | `604800000` | Drop unused mappings after 7 days; their native chats are deleted best-effort. |

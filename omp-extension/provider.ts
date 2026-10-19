@@ -57,6 +57,8 @@ export interface ProviderDeps {
   planner?: ConversationPlanner;
   /** Stable OMP session/subagent key for persistent mappings. */
   scopeKey?: string;
+  /** Minimum delay after any completed turn before the next request. */
+  taskDelayMs?: number;
   /** Renders only messages after the previous turn, for session reuse. */
   buildIncrementalPrompt?(
     context: PromptContext,
@@ -387,6 +389,12 @@ export async function runDeepSeekTurn(
     emitter.fail(failure);
     deps.onStatus?.("DeepSeek Web: error");
   } finally {
+    if (!signal.aborted) {
+      const taskDelayMs = Math.max(0, Math.trunc(deps.taskDelayMs ?? 0));
+      if (taskDelayMs > 0) {
+        deps.requestGate?.cooldown(taskDelayMs);
+      }
+    }
     if (!keepSession && client !== null && sessionId !== null) {
       try {
         await client.deleteSession(sessionId);

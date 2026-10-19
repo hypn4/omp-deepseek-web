@@ -11,6 +11,7 @@ import { runDeepSeekTurn } from "../omp-extension/provider";
 import type { ProviderDeps } from "../omp-extension/provider";
 import type { PromptContext } from "../omp-extension/prompt";
 import { PersistentPlanner } from "../omp-extension/conversation";
+import { RequestGate } from "../src/deepseek/rate-limit";
 import type { ConversationPlanner } from "../omp-extension/conversation";
 import type { EventSink, ModelIdentity } from "../omp-extension/events";
 
@@ -152,6 +153,8 @@ function providerDeps(options: {
   onStatus?: (status: string | null) => void;
   planner?: ConversationPlanner;
   scopeKey?: string;
+  requestGate?: RequestGate;
+  taskDelayMs?: number;
   buildIncrementalPrompt?: (context: PromptContext, startIndex: number) => string | null;
   sessionIds?: string[];
 }): ProviderDeps {
@@ -207,6 +210,8 @@ function providerDeps(options: {
     ...(options.onStatus === undefined ? {} : { onStatus: options.onStatus }),
     ...(options.planner === undefined ? {} : { planner: options.planner }),
     ...(options.scopeKey === undefined ? {} : { scopeKey: options.scopeKey }),
+    ...(options.requestGate === undefined ? {} : { requestGate: options.requestGate }),
+    ...(options.taskDelayMs === undefined ? {} : { taskDelayMs: options.taskDelayMs }),
     ...(options.buildIncrementalPrompt === undefined
       ? {}
       : { buildIncrementalPrompt: options.buildIncrementalPrompt }),
@@ -570,6 +575,19 @@ describe("DeepSeek omp provider", () => {
     expect(requests).toHaveLength(2);
     expect(sink.failure).toBeUndefined();
     expect(sink.ended?.content).toEqual([{ type: "text", text: "OK" }]);
+  });
+
+  test("applies the task delay after a completed turn", async () => {
+    const gate = new RequestGate({ minIntervalMs: 0 });
+    const deps = providerDeps({
+      text: "OK",
+      requestGate: gate,
+      taskDelayMs: 30,
+    });
+    await run(deps, { messages: [{ role: "user", content: "one" }] });
+    const started = Date.now();
+    await run(deps, { messages: [{ role: "user", content: "two" }] });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(20);
   });
 
   test("reports retry count and delay in the status line", async () => {
