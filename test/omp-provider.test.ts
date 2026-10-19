@@ -263,6 +263,57 @@ describe("DeepSeek omp provider", () => {
     expect(deleted).toEqual(["session-1"]);
   });
 
+  test("keeps the same native chat across a tool result", async () => {
+    const requests: DeepSeekCompletionRequest[] = [];
+    const deleted: string[] = [];
+    const planner = new PersistentPlanner({ path: null });
+    const deps = providerDeps({
+      responses: [
+        { text: "calling read", messageId: 2 },
+        { text: "done", messageId: 4 },
+      ],
+      planner,
+      scopeKey: "scope-1",
+      buildIncrementalPrompt: (_context, startIndex) => `DELTA:${startIndex}`,
+      onComplete: (request) => requests.push(request),
+      onDelete: (id) => deleted.push(id),
+    });
+
+    await run(deps, { messages: [{ role: "user", content: "read the file" }] });
+    await run(deps, {
+      messages: [
+        { role: "user", content: "read the file" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call-1",
+              name: "read",
+              arguments: { path: "/tmp/file" },
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "read",
+          content: [{ type: "text", text: "contents" }],
+          isError: false,
+        },
+      ],
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({
+      chatSessionId: "session-1",
+      parentMessageId: 2,
+      prompt: "DELTA:2",
+    });
+    expect(deleted).toEqual([]);
+    planner.close();
+  });
+
   test("adds a handoff only when a fresh native chat is created", async () => {
     const prompts: string[] = [];
     const planner = new PersistentPlanner({ path: null });
