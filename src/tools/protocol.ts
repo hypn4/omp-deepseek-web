@@ -7,6 +7,9 @@
  */
 export const TOOL_CALL_MARKER = "@@OMP_TOOL_CALLS@@";
 
+/** Bump when the wire protocol changes so native sessions are not mixed. */
+export const TOOL_PROTOCOL_VERSION = 2;
+
 export interface ProtocolToolCall {
   name: string;
   arguments: Record<string, unknown>;

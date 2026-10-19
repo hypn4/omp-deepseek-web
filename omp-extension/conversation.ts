@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { PromptContext, PromptMessage } from "./prompt";
+import { TOOL_PROTOCOL_VERSION } from "../src/tools/protocol";
 
 /** SQLite mapping store for persistent native chat sessions. */
 export const DEFAULT_SESSION_STORE_PATH = join(
@@ -91,9 +92,13 @@ function hashJson(value: unknown): string {
 function toolFingerprint(context: PromptContext): unknown {
   // Descriptions can contain volatile host status text. The callable schema
   // (name + parameters) is what the native session must stay compatible with.
-  return [...(context.tools ?? [])]
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .map((tool) => ({ name: tool.name, parameters: tool.parameters ?? null }));
+  // The protocol version prevents mixing DSML native history with JSON turns.
+  return {
+    protocol: TOOL_PROTOCOL_VERSION,
+    tools: [...(context.tools ?? [])]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((tool) => ({ name: tool.name, parameters: tool.parameters ?? null })),
+  };
 }
 
 export function hashMessages(
