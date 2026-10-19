@@ -208,18 +208,17 @@ describe("omp prompt adapter", () => {
     expect(result).not.toContain("### read");
   });
 
-  test("refuses a delta containing a developer message", () => {
-    expect(
-      buildOmpIncrementalPrompt(
-        {
-          messages: [
-            { role: "user", content: "old" },
-            { role: "developer", content: "new instruction" },
-          ],
-        },
-        1,
-      ),
-    ).toBeNull();
+  test("renders a delta containing a developer message without a reset", () => {
+    const result = buildOmpIncrementalPrompt(
+      {
+        messages: [
+          { role: "user", content: "old" },
+          { role: "developer", content: "new instruction" },
+        ],
+      },
+      1,
+    );
+    expect(result).toContain("Developer instruction:\nnew instruction");
   });
 
   test("collects images from the latest turn only", () => {

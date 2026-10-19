@@ -34,8 +34,7 @@ export type ResetReason =
   | "system"
   | "tools"
   | "prefix"
-  | "no-delta"
-  | "developer";
+  | "no-delta";
 
 export interface ConversationPlan {
   /** Prompt sent for this turn. */
@@ -309,16 +308,6 @@ export class PersistentPlanner implements ConversationPlanner {
         persistent: true,
         reused: false,
         resetReason: "no-delta",
-      };
-    }
-
-    const newMessages = context.messages.slice(startIndex);
-    if (newMessages.some((message) => message.role === "developer")) {
-      return {
-        prompt: fullPrompt,
-        persistent: true,
-        reused: false,
-        resetReason: "developer",
       };
     }
 

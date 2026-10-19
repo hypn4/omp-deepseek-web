@@ -206,7 +206,9 @@ rather than deleted.
 Subagent/task sessions use the same strategy only for their own lifetime and are
 deleted in `session_shutdown`. Title generation is detected by its prompt and
 uses an ephemeral session, so it cannot replace the main chat mapping. Ordinary
-tool-less turns still use the persistent strategy.
+tool-less turns still use the persistent strategy. Developer system reminders
+(such as edit-rule violations) are sent as incremental `Developer instruction`
+updates and do not force a new native chat.
 
 Mappings contain only chat/message ids and hashes; no prompt text or tool output
 is stored. They live in a SQLite database at

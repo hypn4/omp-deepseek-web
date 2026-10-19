@@ -82,8 +82,6 @@ function reasonText(reason: ResetReason): string {
       return "The OMP transcript no longer matched the native parent chain, so the native chat was restarted.";
     case "no-delta":
       return "There was no incremental turn to append, so the native chat was restarted.";
-    case "developer":
-      return "A new developer instruction required a fresh full prompt.";
   }
 }
 

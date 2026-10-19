@@ -74,6 +74,37 @@ describe("persistent conversation planner", () => {
     expect(plan.reused).toBe(true);
   });
 
+  test("reuses a session when a developer reminder follows a tool result", () => {
+    const planner = new PersistentPlanner({ path: null });
+    planner.commit("s", context([user("edit it")]), "chat-1", 2);
+
+    const second = context([
+      user("edit it"),
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "call-1", name: "edit", arguments: { path: "/tmp/x" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "edit",
+        content: [{ type: "text", text: "edited" }],
+        isError: false,
+      },
+      { role: "developer", content: "<system-reminder>rule</system-reminder>" },
+    ]);
+    const plan = planner.plan("s", second, FULL, incremental);
+    expect(plan).toMatchObject({
+      prompt: "DELTA 2",
+      chatSessionId: "chat-1",
+      parentMessageId: 2,
+      reused: true,
+    });
+    planner.close();
+  });
+
   test("resets when an earlier message changes", () => {
     const planner = new PersistentPlanner({ path: null });
     planner.commit("s", context([user("one")]), "chat-1", 2);

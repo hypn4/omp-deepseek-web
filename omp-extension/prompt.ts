@@ -162,9 +162,9 @@ function toAssistantMessage(
  * The native DeepSeek session already contains the system/tool block and the
  * prior transcript, so this prompt must not repeat either one.
  *
- * Returns null when the new slice contains a developer message (which belongs
- * in the system prompt) or cannot be rendered safely; callers then reset to a
- * fresh session with the full prompt.
+ * Developer messages are host instructions. They are sent as a user-visible
+ * "Developer instruction" block in the continuation prompt rather than forcing
+ * a fresh native chat.
  */
 export function buildOmpIncrementalPrompt(
   context: PromptContext,
@@ -174,7 +174,11 @@ export function buildOmpIncrementalPrompt(
   for (const message of context.messages.slice(startIndex)) {
     switch (message.role) {
       case "developer":
-        return null;
+        messages.push({
+          role: "user",
+          content: `Developer instruction:\n${textContent(message.content)}`,
+        });
+        break;
       case "user":
         messages.push({ role: "user", content: textContent(message.content) });
         break;
