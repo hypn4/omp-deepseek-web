@@ -1,6 +1,7 @@
 import type { OpenAIMessage, OpenAITool } from "./types";
 import { renderToolPrompt } from "../tools/prompt";
 import { renderToolResults } from "../tools/render";
+import { stripProtocolBlocks } from "../tools/protocol";
 
 const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
 const WORD_BOUNDARY = String.fromCharCode(0x2581);
@@ -111,7 +112,7 @@ export function buildPrompt(
  * parse is ordinary assistant text.
  */
 export function stripToolMarkup(text: string): string {
-  return text
+  return stripProtocolBlocks(text)
     .replace(DSML_TOOL_CALLS_BLOCK, "")
     .replace(V31_TOOL_CALLS_BLOCK, "")
     .replace(DSML_UNCLOSED_BLOCK, "")

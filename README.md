@@ -31,7 +31,8 @@ repository and plugin package name changed.
 - Keeps the latest user message's language even when search results or tool
   output are in another language
 - Text and image input (PNG, JPEG, WebP, GIF)
-- omp tools (`read`, `edit`, `write`, `bash`, …) through a text tool-call bridge
+- omp tools (`read`, `edit`, `write`, `bash`, …) through a marker + JSON
+  tool-call protocol
 - Chrome native-messaging token bridge with owner-only token files
 - No local HTTP server
 
@@ -301,11 +302,11 @@ bun extension/install.ts --uninstall
   guess truncation from punctuation or sentence shape. If the server reports
   `FINISHED` without an incomplete signal, there is no native continuation to
   invoke; the partial result is surfaced with a length-stop warning.
-- **Text tool bridge.** DeepSeek web has no native tool calling. Tool calls are
-  parsed from a prompted format and can break if the model or hidden system
-  prompt changes. Malformed closing tags are recognized as protocol boundaries,
-  and tails that leak into string arguments are stripped before tool execution
-  and history replay; unrecoverable markup still surfaces as a tool-call failure.
+- **Text tool bridge.** DeepSeek web has no native tool calling. The provider
+  uses `@@OMP_TOOL_CALLS@@` followed by one JSON object; there are no
+  per-parameter tags or closing tags to corrupt. The parser reads a balanced JSON
+  object, and history is replayed in the same format. Legacy DSML parsing remains
+  only for old in-flight sessions and is never emitted by the prompt or history.
 - **Images are per-turn.** Uploads and parsing failures surface as the turn
   error. Persistent native history may retain earlier uploaded images according
   to DeepSeek's own retention behavior.

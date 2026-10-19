@@ -54,6 +54,31 @@ describe("streaming completion", () => {
     expect(sink.ended?.stopReason).toBe("stop");
   });
 
+  test("does not stream JSON tool blocks as text", () => {
+    const sink = new FakeSink();
+    const emitter = new StreamingCompletion(sink, MODEL);
+    const markup = `@@OMP_TOOL_CALLS@@\n{"calls":[{"name":"read","arguments":{"path":"README.md"}}]}`;
+    const toolCalls: ParsedToolCall[] = [
+      { id: "call-1", name: "read", arguments: '{"path":"README.md"}' },
+    ];
+
+    emitter.start();
+    emitter.textDelta("Reading the file.\n");
+    emitter.textDelta(markup);
+    emitter.finish({
+      text: "Reading the file.\n",
+      thinking: "",
+      toolCalls,
+    });
+
+    const textDeltas = sink.events
+      .filter((event) => event.type === "text_delta")
+      .map((event) => (event.type === "text_delta" ? event.delta : ""));
+    expect(textDeltas.join("")).toBe("Reading the file.\n");
+    expect(textDeltas.join("")).not.toContain("@@OMP_TOOL_CALLS@@");
+    expect(sink.events.map((event) => event.type)).toContain("toolcall_end");
+  });
+
   test("does not stream DSML tool markup as text", () => {
     const sink = new FakeSink();
     const emitter = new StreamingCompletion(sink, MODEL);

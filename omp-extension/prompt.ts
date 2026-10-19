@@ -201,7 +201,7 @@ export function buildOmpIncrementalPrompt(
 /**
  * Converts omp's canonical conversation into the single DeepSeek prompt.
  * The OpenAI-shaped intermediate keeps the existing tool renderer and parser
- * as the single source of truth for the DSML protocol.
+ * as the single source of truth for the tool protocol.
  */
 export function buildOmpPrompt(
   context: PromptContext,

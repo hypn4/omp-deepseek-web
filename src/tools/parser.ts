@@ -1,18 +1,12 @@
 /**
- * Parses DeepSeek tool-call markup into OpenAI-style tool calls.
+ * Parses tool calls from the marker + JSON protocol, with a read-only fallback
+ * for old DSML/V3.1 transcripts. New prompts and history never emit DSML.
  *
- * Two wire formats are supported:
- *
- * 1. DSML (`tool_calls` / `invoke` / `parameter` wrappers using the fullwidth
- *    vertical line U+FF5C around `DSML`).
- * 2. V3.1 markers (`tool_calls_begin` ... `tool_calls_end`), whose words are
- *    separated by U+2581 (the SentencePiece word boundary). The observed web
- *    model sometimes uses `end_of_query` where the canonical format uses
- *    `tool_sep`, so both separators are accepted.
- *
- * If a block cannot be parsed it is ignored: a normal assistant answer may
- * simply contain no tool call.
+ * The legacy fallback exists only so sessions created before the protocol
+ * migration can still be resumed; it is not used for new assistant output.
  */
+
+import { parseProtocolCalls } from "./protocol";
 
 export interface ParsedToolCall {
   id: string;
@@ -296,6 +290,18 @@ function parseV31Calls(text: string): ParsedToolCall[] {
   return calls;
 }
 
-export function parseToolCalls(text: string): ParsedToolCall[] {
+function parseLegacyToolCalls(text: string): ParsedToolCall[] {
   return [...parseDsmlCalls(text), ...parseV31Calls(text)];
+}
+
+export function parseToolCalls(text: string): ParsedToolCall[] {
+  const protocol = parseProtocolCalls(text);
+  if (protocol.length > 0) {
+    return protocol.map((call) => ({
+      id: globalThis.crypto.randomUUID(),
+      name: call.name,
+      arguments: JSON.stringify(call.arguments),
+    }));
+  }
+  return parseLegacyToolCalls(text);
 }

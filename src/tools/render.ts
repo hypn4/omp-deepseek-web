@@ -1,72 +1,55 @@
 import type { OpenAIMessage, OpenAIToolCall } from "../openai/types";
+import { TOOL_CALL_MARKER } from "./protocol";
 import { stripMalformedDsmlTail } from "./parser";
-
-const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
 
 const CONTINUE_PROMPT =
   "Continue the task using the tool results above. Do not repeat a tool call unless it is necessary.";
 
-/** Keeps tool text from being mistaken for DSML markup when replayed. */
-function escapeDsmlText(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function sanitizeValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return stripMalformedDsmlTail(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizeValue);
+  }
+  if (typeof value === "object" && value !== null) {
+    const result: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      result[key] = sanitizeValue(entry);
+    }
+    return result;
+  }
+  return value;
+}
+
+function argumentsObject(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return sanitizeValue(parsed) as Record<string, unknown>;
+    }
+  } catch {
+    // Historical calls may be malformed; retain an empty object rather than
+    // injecting broken markup into the next prompt.
+  }
+  return {};
 }
 
 function renderToolCalls(calls: OpenAIToolCall[]): string {
-  const lines = [`<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}tool_calls>`];
-
-  for (const call of calls) {
-    lines.push(
-      `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}invoke name="${call.function.name}">`,
-    );
-
-    const rawArguments = call.function.arguments.trim();
-    let parameters: unknown;
-    if (rawArguments.length > 0) {
-      try {
-        parameters = JSON.parse(rawArguments);
-      } catch {
-        parameters = undefined;
-      }
-    }
-
-    if (
-      typeof parameters === "object" &&
-      parameters !== null &&
-      !Array.isArray(parameters)
-    ) {
-      for (const [key, value] of Object.entries(parameters)) {
-        if (typeof value === "string") {
-          lines.push(
-            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="true">${escapeDsmlText(stripMalformedDsmlTail(value))}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
-          );
-        } else {
-          lines.push(
-            `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="${key}" string="false">${escapeDsmlText(JSON.stringify(value))}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
-          );
-        }
-      }
-    } else if (rawArguments.length > 0) {
-      // Keep unparseable arguments visible so the model can correct itself.
-      lines.push(
-        `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="arguments" string="true">${escapeDsmlText(rawArguments)}</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
-      );
-    }
-
-    lines.push(`</invoke>`);
-  }
-
-  lines.push(`</tool_calls>`);
-  return lines.join("\n");
+  const payload = {
+    calls: calls.map((call) => ({
+      name: call.function.name,
+      arguments: argumentsObject(call.function.arguments),
+    })),
+  };
+  return `${TOOL_CALL_MARKER}\n${JSON.stringify(payload)}`;
 }
 
 /**
  * Renders the conversation transcript sent to DeepSeek. System messages are
  * handled by the caller (they precede the tool protocol block), so they are
- * skipped here. Prior assistant tool calls are replayed as DSML so the model
- * sees its own output format.
+ * skipped here. Prior assistant tool calls are replayed in the JSON marker
+ * protocol so the model sees its own output format.
  */
 export function renderToolResults(messages: OpenAIMessage[]): string {
   const toolNames = new Map<string, string>();

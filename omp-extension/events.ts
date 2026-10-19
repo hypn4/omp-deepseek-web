@@ -4,6 +4,7 @@ import type {
   Usage,
 } from "@oh-my-pi/pi-ai";
 import type { ParsedToolCall } from "../src/tools/parser";
+import { TOOL_CALL_MARKER } from "../src/tools/protocol";
 
 export interface ModelIdentity {
   api: AssistantMessage["api"];
@@ -50,12 +51,12 @@ function parseArguments(raw: string): Record<string, unknown> {
 
 const PIPE = String.fromCharCode(0xff5c);
 const TOOL_MARKER = new RegExp(
-  `<\\s*(?:${PIPE}|\\|)?\\s*DSML|tool_calls_begin|tool_calls_end|end_of_query|tool_sep`,
+  `${TOOL_CALL_MARKER}|<\\s*(?:${PIPE}|\\|)?\\s*DSML|tool_calls_begin|tool_calls_end|end_of_query|tool_sep`,
   "i",
 );
 
 /**
- * Holds back a small tail until text is final. This prevents a DSML/tool block
+ * Holds back a small tail until text is final. This prevents a tool block
  * split across SSE chunks from being rendered as ordinary assistant text.
  */
 class TextDeltaFilter {

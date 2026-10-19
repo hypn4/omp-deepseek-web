@@ -1,13 +1,9 @@
 import type { OpenAITool } from "../openai/types";
-
-const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
+import { TOOL_CALL_MARKER } from "./protocol";
 
 const CALL_FORMAT = [
-  `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}tool_calls>`,
-  `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}invoke name="read">`,
-  `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}parameter name="path" string="true">/abs/path</${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR} parameter>`,
-  `</invoke>`,
-  `</tool_calls>`,
+  TOOL_CALL_MARKER,
+  '{"calls":[{"name":"read","arguments":{"path":"/abs/path"}}]}',
 ].join("\n");
 
 /**
@@ -39,7 +35,7 @@ export function renderToolPrompt(tools: OpenAITool[]): string {
 
   return [
     "You are the model backend for a coding agent.",
-    "Use the DSML protocol only for the OMP tools listed below. Native DeepSeek web search may be used when the request enables it; do not use other built-in chat tools.",
+    "Use the JSON tool protocol only for the OMP tools listed below. Native DeepSeek web search may be used when the request enables it; do not use other built-in chat tools.",
     "",
     "## Tools",
     sections.join("\n\n"),
@@ -48,14 +44,14 @@ export function renderToolPrompt(tools: OpenAITool[]): string {
     CALL_FORMAT,
     "",
     "Rules:",
-    "- Emit one or more invoke blocks.",
+    `- Start the tool block with exactly one \`${TOOL_CALL_MARKER}\` marker.`,
+    "- Immediately after the marker, emit one JSON object with a `calls` array.",
+    "- `arguments` must be a JSON object, not a JSON-encoded string.",
+    "- Emit one or more calls in the same block when needed.",
+    "- Never use DSML, XML, `<parameter>`, or per-parameter tags.",
     "- Before emitting, check the `Required` line for the chosen tool and include every listed field.",
     "- `i` is optional intent metadata. It never replaces a required parameter such as a search `query` or a bash `command`.",
-    "- When DeepThink is enabled, keep reasoning in the thinking block and emit the complete tool_calls block in the final RESPONSE.",
-    "- Use the exact opening tags shown above; do not omit the leading bar before DSML.",
-    "- Every invoke must include all required parameters; never send an invoke with an empty body.",
-    "- Every parameter needs both its opening and closing tag; never omit the leading `</` in a closing tag.",
-    '- `string="true"` keeps the value as a raw string; `string="false"` parses JSON.',
+    "- When DeepThink is enabled, keep reasoning in the thinking block and emit the complete marker block in the final RESPONSE.",
     "- Do not wrap the call in prose.",
   ].join("\n");
 }
