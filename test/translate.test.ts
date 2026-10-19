@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { buildPrompt, stripToolMarkup } from "../src/openai/translate";
-import { TOOL_CALL_MARKER } from "../src/tools/protocol";
 import type { OpenAIMessage, OpenAITool } from "../src/openai/types";
 
 // DeepSeek markers use the fullwidth vertical line U+FF5C. Build them
@@ -68,9 +67,8 @@ describe("buildPrompt", () => {
 
     // System messages are rendered once, before the tool protocol block.
     expect(prompt.indexOf("You are a coding agent.", 1)).toBe(-1);
-    // The assistant turn is replayed in the JSON protocol.
-    expect(prompt).toContain(TOOL_CALL_MARKER);
-    expect(prompt).toContain('"name":"read"');
+    // The assistant turn is replayed in DSML so the model sees its own format.
+    expect(prompt).toContain(dsmlOpen('invoke name="read"'));
   });
 
   test("omits the tool prompt and DSML replay when the request has no tools", () => {
@@ -139,19 +137,6 @@ describe("stripToolMarkup", () => {
     ].join("\n");
 
     expect(stripToolMarkup(`before\n${markup}\nafter`)).toBe("before\n\nafter");
-  });
-
-  test("removes a DSOL block and normalizes the legacy marker", () => {
-    const text = `<${PIPE}DSOL${PIPE}tool_calls>\n<${PIPE}DSOL${PIPE}invoke name="read">\n<${PIPE}DSOL${PIPE}parameter name="path" string="true">/tmp/x</${PIPE}DSOL${PIPE}parameter>\n</${PIPE}DSOL${PIPE}invoke>\n</${PIPE}DSOL${PIPE}tool_calls>`;
-    expect(stripToolMarkup(`before\n${text}\nafter`)).toBe("before\n\nafter");
-  });
-
-  test("removes a JSON protocol block and keeps the surrounding prose", () => {
-    expect(
-      stripToolMarkup(
-        `before\n${TOOL_CALL_MARKER}\n{"calls":[{"name":"read","arguments":{"path":"/tmp/x"}}]}\nafter`,
-      ),
-    ).toBe("before\n\nafter");
   });
 
   test("removes a DSML tool_calls block and keeps the surrounding prose", () => {
