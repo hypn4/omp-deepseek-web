@@ -318,7 +318,7 @@ describe("DeepSeek omp provider", () => {
       chatSessionId: "session-2",
       prompt: "rendered prompt",
     });
-    expect(deleted).toContain("session-1");
+    expect(deleted).toEqual([]);
   });
 
   test("keeps a new persistent session only after a successful turn", async () => {

@@ -83,7 +83,6 @@ describe("persistent conversation planner", () => {
       prompt: FULL,
       persistent: true,
       reused: false,
-      replacedChatSessionId: "chat-1",
     });
   });
 

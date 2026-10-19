@@ -237,13 +237,6 @@ export async function runDeepSeekTurn(
 
     if (sessionId === null) {
       sessionId = await client.createSession();
-      if (plan.replacedChatSessionId !== undefined) {
-        try {
-          await client.deleteSession(plan.replacedChatSessionId);
-        } catch {
-          // Replaced native sessions are best-effort cleanup too.
-        }
-      }
     }
 
     let lastText = "";

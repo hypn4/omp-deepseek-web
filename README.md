@@ -199,7 +199,9 @@ these changes:
 
 If a stored native session becomes invalid, that turn fails and its mapping is
 invalidated; the next turn starts a fresh full-prompt session. A failed or
-aborted later turn never deletes the pre-existing native chat.
+aborted later turn never deletes the pre-existing native chat. When the context
+changes and the provider starts a fresh mapping, the old native chat is retained
+rather than deleted.
 
 Subagent/task sessions use the same strategy only for their own lifetime and are
 deleted in `session_shutdown`. Title generation is detected by its prompt and

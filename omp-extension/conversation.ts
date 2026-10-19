@@ -38,8 +38,6 @@ export interface ConversationPlan {
   parentMessageId?: number;
   /** Whether a successful turn should keep the session and commit metadata. */
   persistent: boolean;
-  /** A replaced session that should be deleted. */
-  replacedChatSessionId?: string;
   /** True only when the prompt is an incremental continuation. */
   reused: boolean;
 }
@@ -269,7 +267,6 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
-        replacedChatSessionId: record.chatSessionId,
       };
     }
 
@@ -281,7 +278,6 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
-        replacedChatSessionId: record.chatSessionId,
       };
     }
 
@@ -295,7 +291,6 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
-        replacedChatSessionId: record.chatSessionId,
       };
     }
 
@@ -305,7 +300,6 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
-        replacedChatSessionId: record.chatSessionId,
       };
     }
 
@@ -315,7 +309,6 @@ export class PersistentPlanner implements ConversationPlanner {
         prompt: fullPrompt,
         persistent: true,
         reused: false,
-        replacedChatSessionId: record.chatSessionId,
       };
     }
 
