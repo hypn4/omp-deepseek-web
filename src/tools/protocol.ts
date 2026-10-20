@@ -1,14 +1,29 @@
 /**
  * Tool-call wire protocol.
  *
- * The model emits one marker followed by one JSON object. There is deliberately
- * no closing tag: the parser reads a balanced JSON object, so malformed XML-like
- * closers cannot become part of paths or other string arguments.
+ * The model emits a familiar DSML `tool_calls` opening tag followed by one JSON
+ * object. There is no closing tag and no invoke/parameter markup: the parser
+ * reads a balanced JSON object, so argument boundaries cannot be corrupted by
+ * malformed XML-like closers.
  */
-export const TOOL_CALL_MARKER = "@@OMP_TOOL_CALLS@@";
+const FULLWIDTH_BAR = String.fromCharCode(0xff5c);
+
+export const TOOL_CALL_MARKER = `<${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}tool_calls>`;
+/** Marker used briefly by 0.10.0/0.10.1; still stripped from old history. */
+export const LEGACY_JSON_MARKER = "@@OMP_TOOL_CALLS@@";
 
 /** Bump when the wire protocol changes so native sessions are not mixed. */
-export const TOOL_PROTOCOL_VERSION = 4;
+export const TOOL_PROTOCOL_VERSION = 5;
+
+const MARKER_PATTERN = new RegExp(
+  `(?:${TOOL_CALL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|${LEGACY_JSON_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
+  "giu",
+);
+
+const LOOSE_COMPACT_MARKER = new RegExp(
+  `(?:<)?(?:/)?(?:${FULLWIDTH_BAR}|\\|)?DS[MO]L(?:${FULLWIDTH_BAR}|\\|)\\s*tool_calls\\s*>`,
+  "giu",
+);
 
 export interface ProtocolToolCall {
   name: string;
@@ -59,11 +74,9 @@ function parsePayload(payload: string): ProtocolToolCall[] {
     return [];
   }
   const calls = (parsed as { calls?: unknown }).calls;
-  if (!Array.isArray(calls)) {
-    return [];
-  }
+  const rawCalls = Array.isArray(calls) ? calls : [parsed];
   const result: ProtocolToolCall[] = [];
-  for (const entry of calls) {
+  for (const entry of rawCalls) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       continue;
     }
@@ -81,49 +94,66 @@ function parsePayload(payload: string): ProtocolToolCall[] {
   return result;
 }
 
-/** Parses every marker-delimited JSON call block in model text. */
-export function parseProtocolCalls(text: string): ProtocolToolCall[] {
-  const calls: ProtocolToolCall[] = [];
-  let cursor = 0;
-  while (true) {
-    const marker = text.indexOf(TOOL_CALL_MARKER, cursor);
-    if (marker === -1) {
-      break;
-    }
-    const start = text.indexOf("{", marker + TOOL_CALL_MARKER.length);
-    if (start === -1) {
-      break;
-    }
-    const payload = extractBalancedObject(text, start);
-    if (payload === null) {
-      break;
-    }
-    calls.push(...parsePayload(payload));
-    cursor = start + payload.length;
-  }
-  return calls;
+interface FoundBlock {
+  start: number;
+  end: number;
+  calls: ProtocolToolCall[];
 }
 
-/** Removes marker-delimited JSON blocks from assistant text. */
-export function stripProtocolBlocks(text: string): string {
-  let output = "";
-  let cursor = 0;
-  while (true) {
-    const marker = text.indexOf(TOOL_CALL_MARKER, cursor);
-    if (marker === -1) {
-      output += text.slice(cursor);
-      break;
+function findBlocks(text: string): FoundBlock[] {
+  const blocks: FoundBlock[] = [];
+  const markers: Array<{ index: number; length: number }> = [];
+  for (const match of text.matchAll(MARKER_PATTERN)) {
+    if (match.index !== undefined) {
+      markers.push({ index: match.index, length: match[0].length });
     }
-    output += text.slice(cursor, marker);
-    const start = text.indexOf("{", marker + TOOL_CALL_MARKER.length);
+  }
+  for (const match of text.matchAll(LOOSE_COMPACT_MARKER)) {
+    if (match.index !== undefined) {
+      markers.push({ index: match.index, length: match[0].length });
+    }
+  }
+  markers.sort((left, right) => left.index - right.index);
+
+  for (const marker of markers) {
+    if (blocks.some((block) => marker.index >= block.start && marker.index < block.end)) {
+      continue;
+    }
+    const start = text.indexOf("{", marker.index + marker.length);
     if (start === -1) {
-      break;
+      continue;
     }
     const payload = extractBalancedObject(text, start);
     if (payload === null) {
-      break;
+      continue;
     }
-    cursor = start + payload.length;
+    const calls = parsePayload(payload);
+    if (calls.length === 0) {
+      // An old nested DSML block also starts with a tool_calls tag; leave it
+      // for the legacy parser instead of stripping a parameter-body object.
+      continue;
+    }
+    blocks.push({ start: marker.index, end: start + payload.length, calls });
   }
-  return output.trim();
+  return blocks;
+}
+
+/** Parses every compact marker-delimited JSON call block in model text. */
+export function parseProtocolCalls(text: string): ProtocolToolCall[] {
+  return findBlocks(text).flatMap((block) => block.calls);
+}
+
+/** Removes compact JSON tool blocks from assistant text. */
+export function stripProtocolBlocks(text: string): string {
+  const blocks = findBlocks(text);
+  if (blocks.length === 0) {
+    return text.trim();
+  }
+  let output = "";
+  let cursor = 0;
+  for (const block of blocks) {
+    output += text.slice(cursor, block.start);
+    cursor = block.end;
+  }
+  return (output + text.slice(cursor)).trim();
 }

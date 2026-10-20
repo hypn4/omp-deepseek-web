@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildPrompt, stripToolMarkup } from "../src/openai/translate";
+import { TOOL_CALL_MARKER } from "../src/tools/protocol";
 import type { OpenAIMessage, OpenAITool } from "../src/openai/types";
 
 // DeepSeek markers use the fullwidth vertical line U+FF5C. Build them
@@ -67,8 +68,9 @@ describe("buildPrompt", () => {
 
     // System messages are rendered once, before the tool protocol block.
     expect(prompt.indexOf("You are a coding agent.", 1)).toBe(-1);
-    // The assistant turn is replayed in DSML so the model sees its own format.
-    expect(prompt).toContain(dsmlOpen('invoke name="read"'));
+    // The assistant turn is replayed in the compact JSON protocol.
+    expect(prompt).toContain(TOOL_CALL_MARKER);
+    expect(prompt).toContain('"name":"read"');
   });
 
   test("omits the tool prompt and DSML replay when the request has no tools", () => {

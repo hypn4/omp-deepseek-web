@@ -303,8 +303,8 @@ bun extension/install.ts --uninstall
   `FINISHED` without an incomplete signal, there is no native continuation to
   invoke; the partial result is surfaced with a length-stop warning.
 - **Text tool bridge.** DeepSeek web has no native tool calling. The provider
-  uses `@@OMP_TOOL_CALLS@@` followed by one JSON object; there are no
-  per-parameter tags or closing tags to corrupt. The parser reads a balanced JSON
+  uses a single DSML `tool_calls` opening marker followed by one JSON object;
+  there are no per-parameter tags or closing tags to corrupt. The parser reads a balanced JSON
   object, and history is replayed in the same format. Legacy DSML/DSOL parsing
   remains only for old in-flight sessions; legacy tool markup is stripped from
   system, developer, assistant, and handoff history before prompting.

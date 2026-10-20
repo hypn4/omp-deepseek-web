@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseToolCalls } from "../src/tools/parser";
+import { TOOL_CALL_MARKER } from "../src/tools/protocol";
 import { renderToolPrompt } from "../src/tools/prompt";
 import { renderToolResults } from "../src/tools/render";
 import type { OpenAIMessage, OpenAITool } from "../src/openai/types";
@@ -342,27 +343,18 @@ describe("renderToolPrompt", () => {
       'Parameters: {"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}',
     );
     expect(prompt).toContain(
-      "Use the DSML protocol only for the OMP tools listed below. Native DeepSeek web search may be used when the request enables it; do not use other built-in chat tools.",
+      "Use the compact tool_calls marker plus JSON only for the OMP tools listed below.",
     );
     expect(prompt).toContain("## Call format");
-    expect(prompt).toContain(dsmlOpen("tool_calls"));
-    expect(prompt).toContain(`<${PIPE}DSML${PIPE}invoke name="read">`);
+    expect(prompt).toContain(TOOL_CALL_MARKER);
     expect(prompt).toContain(
-      `<${PIPE}DSML${PIPE}parameter name="path" string="true">/abs/path` +
-        dsmlClose(" parameter"),
-    );
-    expect(prompt).toContain("Rules:");
-    expect(prompt).toContain(
-      "When DeepThink is enabled, keep reasoning in the thinking block and emit the complete tool_calls block in the final RESPONSE.",
+      '{"calls":[{"name":"read","arguments":{"path":"/abs/path"}}]}',
     );
     expect(prompt).toContain(
-      "Use the exact opening tags shown above; do not omit the leading bar before DSML.",
+      "`arguments` must be a JSON object, not a JSON-encoded string.",
     );
     expect(prompt).toContain(
-      "Every invoke must include all required parameters; never send an invoke with an empty body.",
-    );
-    expect(prompt).toContain(
-      '`string="true"` keeps the value as a raw string; `string="false"` parses JSON.',
+      "Never use invoke/parameter tags or a closing tool_calls tag.",
     );
     expect(prompt).toContain("Do not wrap the call in prose.");
   });
@@ -390,7 +382,8 @@ describe("renderToolResults", () => {
 
     expect(text).toContain("User:\nRead /tmp/x");
     expect(text).toContain("Assistant:\nI will read the file.");
-    expect(text).toContain(dsmlOpen('invoke name="read"'));
+    expect(text).toContain(TOOL_CALL_MARKER);
+    expect(text).toContain('"name":"read"');
     expect(text).toContain("Tool result for read (call call_1):\nhello");
     expect(text).toContain(
       "Continue the task using the tool results above. Do not repeat a tool call unless it is necessary.",
@@ -463,7 +456,8 @@ describe("renderToolResults", () => {
       },
     ]);
 
-    expect(text).toContain(dsmlOpen('invoke name="noop"'));
+    expect(text).toContain(TOOL_CALL_MARKER);
+    expect(text).toContain('"name":"noop"');
     expect(text).not.toContain('name="arguments"');
     expect(parseToolCalls(text)[0]?.arguments).toBe("{}");
   });

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AssistantMessage, AssistantMessageEvent } from "@oh-my-pi/pi-ai";
 import type { ParsedToolCall } from "../src/tools/parser";
+import { TOOL_CALL_MARKER } from "../src/tools/protocol";
 import { StreamingCompletion } from "../omp-extension/events";
 
 class FakeSink {
@@ -57,7 +58,7 @@ describe("streaming completion", () => {
   test("does not stream JSON tool blocks as text", () => {
     const sink = new FakeSink();
     const emitter = new StreamingCompletion(sink, MODEL);
-    const markup = `@@OMP_TOOL_CALLS@@\n{"calls":[{"name":"read","arguments":{"path":"README.md"}}]}`;
+    const markup = `${TOOL_CALL_MARKER}\n{"calls":[{"name":"read","arguments":{"path":"README.md"}}]}`;
     const toolCalls: ParsedToolCall[] = [
       { id: "call-1", name: "read", arguments: '{"path":"README.md"}' },
     ];
@@ -75,7 +76,7 @@ describe("streaming completion", () => {
       .filter((event) => event.type === "text_delta")
       .map((event) => (event.type === "text_delta" ? event.delta : ""));
     expect(textDeltas.join("")).toBe("Reading the file.\n");
-    expect(textDeltas.join("")).not.toContain("@@OMP_TOOL_CALLS@@");
+    expect(textDeltas.join("")).not.toContain(TOOL_CALL_MARKER);
     expect(sink.events.map((event) => event.type)).toContain("toolcall_end");
   });
 
